@@ -1,4 +1,4 @@
-# OTP System
+# OTP Delivery Pattern
 
 **English** | [Tiếng Việt](../vn/otp-system.md)
 
@@ -6,194 +6,129 @@
 
 ## Overview
 
-The OTP (One-Time Password) system in Notification Service manages the full lifecycle of verification codes used across the platform. It is the only component responsible for generating, storing, and verifying OTP codes — no other service touches OTP data directly.
+Notification Service does **not** generate, store, or verify OTP codes. OTP lifecycle — generation, storage, and verification — belongs entirely to the **calling service** (Identity Service, User Service, etc.).
+
+Notification Service's role in an OTP flow is simple: receive a `SendEmail` call with the OTP code already included in the template data, render the template, and deliver the email.
 
 ```
-Identity Service / User Service
-      ↓ SendOtpEmail(channel, target, otp_type, context_id)
+Identity Service
+      ↓ generates OTP code
+      ↓ stores HMAC-SHA256(otp_code) in its database
+      ↓ SendEmail(to, template="otp-email", data={otp_code, expires_min})
 Notification Service
-      ↓ generates code → hashes → stores → sends email
-      ↓ returns otp_id + expires_at
-Caller holds otp_id
-      ↓ user submits code to caller
-Caller
-      ↓ VerifyOtp(otp_id, code)
-Notification Service
-      ↓ looks up record → checks expiry → verifies hash → marks used
-      ↓ returns success/failure
-Caller proceeds (issue JWT, confirm change, etc.)
+      ↓ renders template with otp_code
+      ↓ sends email via SMTP
+      ↓ returns notification_id
+Identity Service
+      ↓ waits for user to submit code
+User submits code → Identity Service
+      ↓ verifies HMAC(submitted_code) == stored hash
+      ↓ marks OTP as used in its own database
+      ↓ proceeds (issue JWT, confirm change, etc.)
 ```
 
 ---
 
-## OTP Types
+## Why the Caller Owns OTP
 
-Each OTP is created with a specific `otp_type` that identifies its purpose:
+OTP is an authentication and security concept — it belongs to the auth domain, not to the delivery infrastructure. Moving OTP lifecycle into Notification Service would:
 
-| OTP Type | Used by | Purpose |
-|---|---|---|
-| `VERIFY_EMAIL` | Identity Service, User Service | Confirm ownership of an email address |
-| `RESET_PASSWORD` | Identity Service | Authorize a password reset flow |
-| `LOGIN_MFA` | Identity Service | Second-factor challenge during login |
-| `CONFIRM_EMAIL_CHANGE` | User Service | Verify new email address when changing account email |
-| `CONFIRM_PHONE` | User Service | Verify phone number ownership |
+- Force Notification Service to store auth-domain data (`otp_type`, `context_id`, `identity_id`)
+- Create a dependency where Identity Service must call back to Notification Service just to verify a 6-digit code
+- Violate the "no domain knowledge" boundary that makes Notification Service reusable across all applications
 
-The `otp_type` is stored in the `OtpRecord` and returned in responses for observability. Notification Service does not act differently based on type — type is informational for the caller.
+By keeping OTP in the calling service, each service manages its own security policy: expiry duration, retry limits, brute-force protection, and audit logging are all the caller's concern.
 
 ---
 
-## OTP Record Domain Model
+## Caller Implementation Guide
+
+### 1. Generate and Store the OTP
 
 ```python
-@dataclass(frozen=True)
-class OtpRecord:
-    otp_id:     bytes     # 24-byte KSUID — unique identifier returned to caller
-    channel:    OtpChannel  # EMAIL | PHONE
-    target:     str       # normalized recipient (email address or phone number)
-    otp_hash:   str       # HMAC-SHA256 hash of the raw OTP code
-    otp_type:   OtpType   # purpose of this OTP
-    context_id: bytes     # caller-provided ID linking this OTP to a business entity
-    expires_at: datetime  # when this OTP becomes invalid
-    is_used:    bool      # True after successful verification (one-time enforcement)
-    created_at: datetime
-```
-
-`context_id` is an opaque identifier provided by the caller — for example, the `identity_id` or `user_id` of the entity undergoing verification. Notification Service stores it but does not interpret it.
-
----
-
-## Send OTP Flow
-
-```
-SendOtpEmailUseCase.execute(command)
-      ↓
-1. Generate OTP code
-      → secrets.randbelow(1_000_000)
-      → format as 6-digit string (zero-padded)
-
-2. Hash OTP code
-      → HMAC-SHA256(key=SECRET_KEY, msg=otp_code)
-      → store hash only — raw code never persisted
-
-3. Create OtpRecord
-      → otp_id     = generate_id()         (24-byte KSUID)
-      → otp_hash   = computed above
-      → expires_at = now + 5 minutes
-      → is_used    = False
-
-4. Save OtpRecord to database
-      → SaveOtpPort.save(otp_record)
-
-5. Render email template
-      → TemplatePort.render("otp-email", {"otp_code": raw_code})
-      → raw_code is passed to template but never stored
-
-6. Send email
-      → EmailSenderPort.send(target, subject, rendered_body)
-
-7. Return SendOtpResult
-      → otp_id, expires_at
-      (caller stores otp_id; raw code goes only to the user's inbox)
-```
-
----
-
-## Verify OTP Flow
-
-```
-VerifyOtpUseCase.execute(command)
-      command = { otp_id, code }
-      ↓
-1. Load OtpRecord
-      → LoadOtpPort.find_by_id(otp_id)
-      → raises OtpNotFoundError if not found
-
-2. Check expiry
-      → now > otp_record.expires_at → raises OtpExpiredError
-
-3. Check already used
-      → otp_record.is_used == True → raises OtpAlreadyUsedError
-
-4. Verify code
-      → HMAC-SHA256(SECRET_KEY, submitted_code) == otp_record.otp_hash
-      → mismatch → raises OtpVerificationFailedError
-
-5. Mark as used
-      → updated = otp_record.mark_used()      (returns new frozen instance)
-      → SaveOtpPort.save(updated)             (upsert / update in DB)
-
-6. Return VerifyOtpResult
-      → { success: True }
-```
-
----
-
-## Security Design
-
-### No Plaintext Storage
-
-Raw OTP codes are **never stored** — not in the database, not in logs. Only the HMAC-SHA256 hash is persisted.
-
-```
-raw_code  → HMAC-SHA256(SECRET_KEY, raw_code) → stored in otp_hash column
-```
-
-The raw code exists only in memory during the `SendOtpEmailUseCase` execution and in the email body delivered to the user.
-
-### One-Time Enforcement
-
-Once verified successfully, `is_used` is set to `True` and persisted. Any subsequent verification attempt on the same `otp_id` returns `OtpAlreadyUsedError` — even if the correct code is submitted.
-
-### Time-Limited Validity
-
-OTP codes expire after a short TTL (default: 5 minutes). An expired OTP cannot be verified even if the code is correct. The `expires_at` timestamp is stored at creation time using UTC.
-
-### Timing-Safe Comparison
-
-Hash comparison uses constant-time equality (`hmac.compare_digest`) to prevent timing attacks:
-
-```python
+import secrets
 import hmac
-valid = hmac.compare_digest(expected_hash, submitted_hash)
+import hashlib
+
+# Generate
+otp_code = f"{secrets.randbelow(1_000_000):06d}"  # "847291"
+
+# Hash — never store raw code
+secret_key = b"..."  # from config
+otp_hash = hmac.new(secret_key, otp_code.encode(), hashlib.sha256).hexdigest()
+
+# Store in caller's own DB
+await otp_repository.save(OtpRecord(
+    otp_id     = generate_id(),
+    target     = normalize_email(user_email),
+    otp_hash   = otp_hash,
+    otp_type   = OtpType.LOGIN_MFA,
+    context_id = identity_id,
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5),
+    is_used    = False,
+))
 ```
 
-### Identifier Design
+### 2. Call Notification Service to Deliver
 
-`otp_id` is a 24-byte KSUID — sortable, globally unique, and opaque. It does not encode any information about the OTP type, recipient, or caller. The caller receives only `otp_id` — they cannot derive the OTP code from it.
-
----
-
-## Database Schema
-
-```sql
-CREATE TABLE otp_records (
-    otp_id      BYTEA        PRIMARY KEY,         -- KSUID 24 bytes
-    channel     VARCHAR(10)  NOT NULL,             -- EMAIL | PHONE
-    target      VARCHAR(255) NOT NULL,             -- normalized recipient
-    otp_hash    VARCHAR(255) NOT NULL,             -- HMAC-SHA256 hash (never raw)
-    otp_type    VARCHAR(50)  NOT NULL,             -- VERIFY_EMAIL | LOGIN_MFA | ...
-    context_id  BYTEA,                            -- opaque caller-provided ID
-    expires_at  TIMESTAMP    NOT NULL,
-    is_used     BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMP    NOT NULL
-);
-
-CREATE INDEX idx_otp_target_type ON otp_records (target, otp_type, is_used);
-CREATE INDEX idx_otp_expires     ON otp_records (expires_at);
+```python
+await notification_stub.SendEmail(SendEmailRequest(
+    to      = user_email,
+    subject = "Your verification code",
+    tmpl    = TemplateContent(
+        template_name = "otp-email",
+        context       = {
+            "otp_code":    otp_code,       # raw code — goes to user's inbox only
+            "expires_min": "5",
+        },
+    ),
+))
 ```
 
-The index on `(target, otp_type, is_used)` supports future rate-limiting queries (e.g., "how many unused OTPs of type RESET_PASSWORD has this email received in the last hour?").
+### 3. Verify When User Submits
+
+```python
+record = await otp_repository.find_by_id(otp_id)
+
+if record is None:
+    raise OtpNotFoundError()
+if datetime.now(timezone.utc) >= record.expires_at:
+    raise OtpExpiredError()
+if record.is_used:
+    raise OtpAlreadyUsedError()
+
+submitted_hash = hmac.new(secret_key, submitted_code.encode(), hashlib.sha256).hexdigest()
+if not hmac.compare_digest(submitted_hash, record.otp_hash):
+    raise OtpInvalidError()
+
+# Mark as used
+await otp_repository.save(record.mark_used())
+```
 
 ---
 
-## OTP Cleanup
+## Notification Service Template Contract
 
-Expired OTP records accumulate over time. A scheduled background job (not yet implemented — see roadmap) will periodically delete records where `expires_at < now - retention_window`. Expired records are safe to delete after a short retention window (e.g., 24 hours) since they can no longer be used.
+Notification Service provides an `otp-email` template that expects these context variables:
+
+| Variable | Required | Description |
+|---|---|---|
+| `otp_code` | Yes | The 6-digit OTP code to display |
+| `expires_min` | No | Expiry time in minutes (default: shown as "a few minutes") |
+| `action` | No | Human-readable description of the action (e.g., "log in", "reset your password") |
+
+For other notification types (login alert, password changed, etc.), see the templates in `infrastructure/template/templates/`.
 
 ---
 
-## What Notification Service Does NOT Enforce
+## Security Responsibilities
 
-- **Rate limiting per recipient**: Notification Service does not limit how many OTPs a caller sends to the same address. The calling service (Identity Service, User Service) is responsible for rate limiting at its own layer.
-- **OTP type validation**: Notification Service accepts any `otp_type` string. It is the caller's responsibility to send a valid type.
-- **Caller authorization by OTP type**: Any authenticated caller (valid mTLS cert) can request any OTP type. Fine-grained authorization by type is a future concern.
+| Concern | Owner |
+|---|---|
+| OTP code generation (secure random) | Calling service |
+| OTP hash storage (no plaintext) | Calling service |
+| OTP expiry enforcement | Calling service |
+| One-time use enforcement | Calling service |
+| Rate limiting (OTPs per recipient) | Calling service |
+| Brute-force protection (failed attempts) | Calling service |
+| Template rendering and email delivery | **Notification Service** |

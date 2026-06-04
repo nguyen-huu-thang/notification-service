@@ -24,25 +24,23 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12notification.proto\x12\x0cnotification\"\\\n\x13SendOtpEmailRequest\x12\x0f\n\x07\x63hannel\x18\x01 \x01(\t\x12\x0e\n\x06target\x18\x02 \x01(\t\x12\x10\n\x08otp_type\x18\x03 \x01(\t\x12\x12\n\ncontext_id\x18\x04 \x01(\x0c\":\n\x14SendOtpEmailResponse\x12\x0e\n\x06otp_id\x18\x01 \x01(\x0c\x12\x12\n\nexpires_at\x18\x02 \x01(\x03\"0\n\x10VerifyOtpRequest\x12\x0e\n\x06otp_id\x18\x01 \x01(\x0c\x12\x0c\n\x04\x63ode\x18\x02 \x01(\t\"$\n\x11VerifyOtpResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"]\n\x10SendEmailRequest\x12\n\n\x02to\x18\x01 \x01(\t\x12\x0f\n\x07subject\x18\x02 \x01(\t\x12\x15\n\rtemplate_name\x18\x03 \x01(\t\x12\x15\n\rtemplate_data\x18\x04 \x01(\t\",\n\x11SendEmailResponse\x12\x17\n\x0fnotification_id\x18\x01 \x01(\x0c\x32\x88\x02\n\x13NotificationService\x12U\n\x0cSendOtpEmail\x12!.notification.SendOtpEmailRequest\x1a\".notification.SendOtpEmailResponse\x12L\n\tVerifyOtp\x12\x1e.notification.VerifyOtpRequest\x1a\x1f.notification.VerifyOtpResponse\x12L\n\tSendEmail\x12\x1e.notification.SendEmailRequest\x1a\x1f.notification.SendEmailResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12notification.proto\x12\x0cnotification\"y\n\x10SendEmailRequest\x12\n\n\x02to\x18\x01 \x01(\t\x12\x0f\n\x07subject\x18\x02 \x01(\t\x12\x0e\n\x04\x62ody\x18\x03 \x01(\tH\x00\x12-\n\x04tmpl\x18\x04 \x01(\x0b\x32\x1d.notification.TemplateContentH\x00\x42\t\n\x07\x63ontent\"\x95\x01\n\x0fTemplateContent\x12\x15\n\rtemplate_name\x18\x01 \x01(\t\x12;\n\x07\x63ontext\x18\x02 \x03(\x0b\x32*.notification.TemplateContent.ContextEntry\x1a.\n\x0c\x43ontextEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\",\n\x11SendEmailResponse\x12\x17\n\x0fnotification_id\x18\x01 \x01(\x0c\x32\x63\n\x13NotificationService\x12L\n\tSendEmail\x12\x1e.notification.SendEmailRequest\x1a\x1f.notification.SendEmailResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'notification_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SENDOTPEMAILREQUEST']._serialized_start=36
-  _globals['_SENDOTPEMAILREQUEST']._serialized_end=128
-  _globals['_SENDOTPEMAILRESPONSE']._serialized_start=130
-  _globals['_SENDOTPEMAILRESPONSE']._serialized_end=188
-  _globals['_VERIFYOTPREQUEST']._serialized_start=190
-  _globals['_VERIFYOTPREQUEST']._serialized_end=238
-  _globals['_VERIFYOTPRESPONSE']._serialized_start=240
-  _globals['_VERIFYOTPRESPONSE']._serialized_end=276
-  _globals['_SENDEMAILREQUEST']._serialized_start=278
-  _globals['_SENDEMAILREQUEST']._serialized_end=371
-  _globals['_SENDEMAILRESPONSE']._serialized_start=373
-  _globals['_SENDEMAILRESPONSE']._serialized_end=417
-  _globals['_NOTIFICATIONSERVICE']._serialized_start=420
-  _globals['_NOTIFICATIONSERVICE']._serialized_end=684
+  _globals['_TEMPLATECONTENT_CONTEXTENTRY']._loaded_options = None
+  _globals['_TEMPLATECONTENT_CONTEXTENTRY']._serialized_options = b'8\001'
+  _globals['_SENDEMAILREQUEST']._serialized_start=36
+  _globals['_SENDEMAILREQUEST']._serialized_end=157
+  _globals['_TEMPLATECONTENT']._serialized_start=160
+  _globals['_TEMPLATECONTENT']._serialized_end=309
+  _globals['_TEMPLATECONTENT_CONTEXTENTRY']._serialized_start=263
+  _globals['_TEMPLATECONTENT_CONTEXTENTRY']._serialized_end=309
+  _globals['_SENDEMAILRESPONSE']._serialized_start=311
+  _globals['_SENDEMAILRESPONSE']._serialized_end=355
+  _globals['_NOTIFICATIONSERVICE']._serialized_start=357
+  _globals['_NOTIFICATIONSERVICE']._serialized_end=456
 # @@protoc_insertion_point(module_scope)

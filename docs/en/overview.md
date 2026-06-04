@@ -8,17 +8,17 @@
 
 Notification Service is the **outbound communication infrastructure** of the Xime Base Platform.
 
-Its role is to be the single point responsible for delivering messages to the outside world — via email today, via SMS in the future. No other service sends emails or manages OTP codes directly. When any service in the platform needs to reach an end user, it delegates to Notification Service.
+Its role is to be the single point responsible for delivering messages to the outside world — via email today, via SMS in the future. When any service in the platform needs to reach an end user, it delegates the delivery to Notification Service.
 
 ```
 Base Platform Services
-  identity-service → SendOtpEmail (MFA codes, email verification)
-  user-service     → SendOtpEmail (credential change confirmation)
-  payment-service  → SendEmail    (transaction receipts)
+  identity-service → SendEmail (OTP code in template data)
+  user-service     → SendEmail (OTP code in template data)
+  payment-service  → SendEmail (transaction receipts)
 
 Application Layer Services
-  order-service    → SendEmail    (order confirmation)
-  workspace-service → SendEmail   (workspace invitations)
+  order-service      → SendEmail (order confirmation)
+  workspace-service  → SendEmail (workspace invitations)
          ↓  (all outbound communication flows through here)
    Notification Service
          ↓
@@ -42,7 +42,7 @@ Generic, reusable infrastructure services built once and shared across all appli
 | `identity-service` | Authentication — JWT issuance, refresh tokens |
 | `user-service` | Human Identity Domain — credentials, account state |
 | `data-service` | Data infrastructure — object storage, permission |
-| `notification-service` | **Notification delivery — email, OTP, SMS** |
+| `notification-service` | **Notification delivery — email, SMS** |
 | `payment-service` | Payment processing |
 
 ### Application Layer (business services)
@@ -57,66 +57,34 @@ Notification Service serves all of these — both core platform services and app
 
 ---
 
-## Two Capabilities
+## Capability: Email Delivery
 
-Notification Service provides two independent capabilities that share infrastructure but have separate concerns:
-
-### A. Email Delivery
-
-Used for sending any outbound email — including OTP emails, system notifications, and application-defined custom messages:
+Notification Service has one core capability: deliver emails on behalf of callers.
 
 ```
 Caller
-   → SendEmail(to, subject, body, channel)
+   → SendEmail(to, subject, template_name, template_data)
         ↓
 Notification Service
    → normalize recipient address
-   → validate recipient format
+   → render Jinja2 template with provided data
    → send via SMTP adapter
    → return notification_id
 ```
 
-For template-based emails, the caller passes a template name and context data instead of a pre-rendered body:
+For callers with a pre-rendered body:
 
 ```
 Caller
-   → SendEmail(to, template_name, template_context, channel)
+   → SendEmail(to, subject, body)
         ↓
 Notification Service
-   → render template (Jinja2)
+   → normalize recipient address
    → send via SMTP adapter
+   → return notification_id
 ```
 
-### B. OTP System
-
-Used for verification flows where the platform needs to prove the user controls an email address or phone number:
-
-```
-Caller
-   → SendOtpEmail(channel, target, otp_type, context_id)
-        ↓
-Notification Service
-   → generate 6-digit OTP code
-   → hash OTP code (HMAC-SHA256)
-   → save OtpRecord to database (expires in 5 minutes)
-   → render OTP email template
-   → send email
-   → return otp_id + expires_at
-        ↓
-Caller holds otp_id, waits for user to submit the code
-        ↓
-Caller
-   → VerifyOtp(otp_id, code)
-        ↓
-Notification Service
-   → load OtpRecord by otp_id
-   → check: not expired, not already used
-   → verify: hash(code) == stored otp_hash
-   → mark OtpRecord as used (one-time enforcement)
-   → return success/failure
-```
-
-The caller never sees the raw OTP code or its hash. Notification Service owns the entire OTP lifecycle.
+Notification Service does not know what the email means. The caller provides the template name, the data, and the recipient — Notification Service only handles rendering and delivery.
 
 ---
 
@@ -128,8 +96,10 @@ All callers communicate via **gRPC + mTLS**. Notification Service has no REST AP
 
 | Service | Use Cases |
 |---|---|
-| **Identity Service** | Login MFA OTP, email verification OTP on registration, password reset OTP |
-| **User Service** | New email confirmation OTP, phone number confirmation OTP, password change notification |
+| **Identity Service** | Send login MFA email, email verification email on registration, password reset email |
+| **User Service** | Send new email confirmation email, phone confirmation email, password change notification |
+
+For OTP flows, these services generate and manage the OTP code themselves, then pass the code as template data when calling `SendEmail`.
 
 ### Application Layer (business callers)
 
@@ -138,11 +108,11 @@ Application services send custom transactional emails relevant to their business
 | Example Use Case | Notification Type |
 |---|---|
 | Order confirmation | `SendEmail` (template: `order-confirmation`) |
-| Appointment reminder | `SendEmail` or `SendSms` |
+| Appointment reminder | `SendEmail` |
 | Transaction alert | `SendEmail` (template: `transaction-alert`) |
 | Workspace invitation | `SendEmail` (template: `workspace-invite`) |
 
-Application services do not know about SMTP, Jinja2 templates, or OTP storage — they call gRPC and pass: channel, recipient, template name, and data. The delivery details are entirely Notification Service's concern.
+Application services do not know about SMTP or Jinja2 internals — they call gRPC and pass: recipient, subject, template name, and data. The delivery details are entirely Notification Service's concern.
 
 ---
 
@@ -151,18 +121,19 @@ Application services do not know about SMTP, Jinja2 templates, or OTP storage �
 | Question | Answer |
 |---|---|
 | What is Notification Service? | Outbound delivery infrastructure — the platform's single notification gateway |
-| What does it manage? | Email delivery + OTP lifecycle (generate, store, verify) |
+| What does it manage? | Email delivery and template rendering |
+| Does it manage OTP codes? | No — OTP lifecycle is the caller's responsibility |
 | Does it know what a notification means? | No — that is the caller's concern |
 | Does it authenticate end users? | No — it trusts the calling service via mTLS |
-| Who owns OTP codes? | Notification Service — callers only receive an `otp_id` |
 | What if SMTP goes down? | Notification Service returns an error; the caller decides whether to retry |
-| Is it stateful? | Yes — OTP records are persisted in PostgreSQL |
+| Is it stateful? | No — no database required |
 
 ---
 
 ## What Notification Service Is NOT
 
 - Not a business service — it has no knowledge of order flows, auth flows, or user journeys
+- Not an OTP manager — it does not generate, store, or verify OTP codes
 - Not a message broker — it does not queue or retry sends internally
 - Not a notification preferences manager — it does not decide who wants what
 - Not a user-facing service — end users never interact with it directly

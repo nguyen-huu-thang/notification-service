@@ -6,11 +6,11 @@
 
 ## Overview
 
-Notification Service exposes a single gRPC API group. There is no REST API — all communication happens over gRPC with mandatory mTLS.
+Notification Service exposes a single gRPC API. There is no REST API — all communication happens over gRPC with mandatory mTLS.
 
 | Group | Purpose |
 |---|---|
-| **NotificationService** | Send emails, manage OTP lifecycle |
+| **NotificationService** | Send emails on behalf of other services |
 
 Proto files are located in `app/api/grpc/generated/`.
 
@@ -22,14 +22,8 @@ All callers must present a valid mTLS certificate issued by Trust Service. Unaut
 
 ```protobuf
 service NotificationService {
-  // Send a plain email (no OTP)
+  // Send a transactional email — either from a named template or pre-rendered body
   rpc SendEmail(SendEmailRequest) returns (SendEmailResponse);
-
-  // Generate an OTP, save it, and send it to the recipient via email
-  rpc SendOtpEmail(SendOtpEmailRequest) returns (SendOtpEmailResponse);
-
-  // Verify a submitted OTP code
-  rpc VerifyOtp(VerifyOtpRequest) returns (VerifyOtpResponse);
 }
 ```
 
@@ -37,12 +31,12 @@ service NotificationService {
 
 ## SendEmail
 
-Send a transactional email directly — either with a pre-rendered body or using a named template.
+Send a transactional email to a single recipient. Supports two content modes: named template (Jinja2 rendered server-side) or pre-rendered body.
 
 ```protobuf
 message SendEmailRequest {
-  string to       = 1;  // recipient email address
-  string subject  = 2;  // email subject line
+  string to      = 1;  // recipient email address
+  string subject = 2;  // email subject line
 
   oneof content {
     string body          = 3;  // pre-rendered HTML or plain text
@@ -51,86 +45,54 @@ message SendEmailRequest {
 }
 
 message TemplateContent {
-  string template_name = 1;                  // e.g. "order-confirmation"
-  map<string, string> context = 2;           // template variables
+  string template_name            = 1;  // e.g. "otp-email", "order-confirmation"
+  map<string, string> context     = 2;  // template variables
 }
 
 message SendEmailResponse {
-  bytes notification_id = 1;  // 24-byte KSUID of the EmailNotification record
+  bytes notification_id = 1;  // 24-byte KSUID — for logging and traceability
 }
 ```
 
 **Usage notes:**
+
 - `to` is normalized (lowercased, Unicode-normalized) before sending
 - `template_name` must match a file in `infrastructure/template/templates/`
 - `notification_id` is returned for logging and traceability — it is not used for any further operation
+- For OTP emails: the caller generates the OTP code, stores its hash, and passes the raw code as a template variable (e.g., `context["otp_code"] = "123456"`)
 
----
+**Example — OTP email:**
 
-## SendOtpEmail
-
-Generate a 6-digit OTP code, store its hash in the database, and send it to the recipient via email.
-
-```protobuf
-message SendOtpEmailRequest {
-  string channel    = 1;  // always "EMAIL" for this RPC
-  string target     = 2;  // recipient email address
-  string otp_type   = 3;  // VERIFY_EMAIL | RESET_PASSWORD | LOGIN_MFA | ...
-  bytes  context_id = 4;  // opaque ID linking OTP to a business entity (e.g. identity_id)
-}
-
-message SendOtpEmailResponse {
-  bytes  otp_id     = 1;  // 24-byte KSUID — store this to verify later
-  int64  expires_at = 2;  // Unix timestamp (ms) — when the OTP becomes invalid
+```
+SendEmailRequest {
+  to:      "user@example.com",
+  subject: "Your verification code",
+  tmpl: {
+    template_name: "otp-email",
+    context: {
+      "otp_code":   "847291",
+      "expires_min": "5"
+    }
+  }
 }
 ```
 
-**Usage notes:**
-- `target` is normalized before use (lowercased, trimmed)
-- `otp_id` must be stored by the caller — it is required to verify the OTP later
-- `context_id` is stored as-is and returned in responses for traceability; Notification Service does not interpret it
-- The raw OTP code goes only to the user's inbox — the caller never sees it
+**Example — order confirmation:**
 
-**OTP type values:**
-
-| Value | Meaning |
-|---|---|
-| `VERIFY_EMAIL` | Confirm ownership of an email address |
-| `RESET_PASSWORD` | Authorize a password reset |
-| `LOGIN_MFA` | Second-factor challenge during login |
-| `CONFIRM_EMAIL_CHANGE` | Verify new email address |
-| `CONFIRM_PHONE` | Verify phone number |
-
----
-
-## VerifyOtp
-
-Verify a submitted OTP code against the stored record.
-
-```protobuf
-message VerifyOtpRequest {
-  bytes  otp_id = 1;  // returned by SendOtpEmail
-  string code   = 2;  // 6-digit code submitted by the user
-}
-
-message VerifyOtpResponse {
-  bool   success        = 1;
-  string failure_reason = 2;  // populated when success = false
+```
+SendEmailRequest {
+  to:      "buyer@example.com",
+  subject: "Your order has been confirmed",
+  tmpl: {
+    template_name: "order-confirmation",
+    context: {
+      "order_id":    "ORD-20240601-001",
+      "total":       "199,000 VND",
+      "delivery_at": "2024-06-05"
+    }
+  }
 }
 ```
-
-**Failure reasons:**
-
-| Reason | Meaning |
-|---|---|
-| `NOT_FOUND` | No OTP record exists for the given `otp_id` |
-| `EXPIRED` | OTP has passed its `expires_at` timestamp |
-| `ALREADY_USED` | OTP was already verified successfully |
-| `INVALID_CODE` | The submitted code does not match |
-
-**Usage notes:**
-- On success, the OTP record is marked as used — subsequent calls with the same `otp_id` will return `ALREADY_USED`
-- On failure, the record is **not** marked as used — the caller may allow the user to retry (subject to the caller's own rate limiting)
 
 ---
 
@@ -142,7 +104,6 @@ message VerifyOtpResponse {
 | Invalid recipient format | `INVALID_ARGUMENT` |
 | Template not found | `NOT_FOUND` |
 | SMTP delivery failed | `UNAVAILABLE` |
-| OTP not found | `NOT_FOUND` |
 | Any unexpected error | `INTERNAL` |
 
 ---
@@ -159,23 +120,15 @@ All connections must use mTLS. The caller presents its service certificate (issu
 3. App layer:   cert.service_id == request metadata service_id
 ```
 
-### Do Not Call on Every User Request
+### Fire and Forget
 
-Notification Service is a fire-and-forget delivery service. Callers should:
-- Call `SendOtpEmail` once per user action requiring OTP (login, registration, etc.)
-- Store the returned `otp_id` in their own session or database — do not call `SendOtpEmail` again to "look up" an existing OTP
-- Call `VerifyOtp` once when the user submits their code
-
-### Retry Strategy Belongs to the Caller
-
-If `SendEmail` or `SendOtpEmail` returns `UNAVAILABLE` (SMTP failure), Notification Service has not stored any retry intent. The caller decides whether to retry. For OTP flows, the caller may re-call `SendOtpEmail` to generate a new OTP — the old `otp_id` remains in the database and will expire naturally.
+Notification Service is a fire-and-forget delivery service. Call `SendEmail` once per user action. If `SendEmail` returns `UNAVAILABLE` (SMTP failure), Notification Service has not stored any retry intent — the caller decides whether to retry.
 
 ### Summary Table
 
 | Situation | Should call? |
 |---|---|
-| User requests login OTP | Yes — `SendOtpEmail` |
-| User submits OTP code | Yes — `VerifyOtp` |
-| Sending order confirmation | Yes — `SendEmail` with template |
-| Checking if a previous OTP is still valid | No — use `expires_at` returned at creation |
+| Send login OTP to user | Yes — `SendEmail` with `otp-email` template |
+| Send order confirmation | Yes — `SendEmail` with `order-confirmation` template |
+| Checking if a previous email was delivered | No — Notification Service does not expose delivery status |
 | Sending the same email multiple times | No — call once; retry only on transport failure |

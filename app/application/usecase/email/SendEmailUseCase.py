@@ -20,7 +20,13 @@ class SendEmailUseCase:
         recipient = normalize_email(command.to)
         self._validate_email(recipient)
 
-        body = await self._template.render(command.template_name, command.template_data)
+        if command.template_name:
+            body = await self._template.render(command.template_name, command.template_data)
+        elif command.body:
+            body = command.body
+        else:
+            raise ValueError("Either template_name or body must be provided")
+
         await self._email_sender.send(recipient, command.subject, body)
 
         return SendEmailResult(notification_id=generate_id())

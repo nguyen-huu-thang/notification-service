@@ -2,45 +2,26 @@ syntax = "proto3";
 package notification;
 
 service NotificationService {
-  rpc SendOtpEmail (SendOtpEmailRequest)  returns (SendOtpEmailResponse);
-  rpc VerifyOtp    (VerifyOtpRequest)     returns (VerifyOtpResponse);
-  rpc SendEmail    (SendEmailRequest)     returns (SendEmailResponse);
-}
-
-// ── SendOtpEmail ──────────────────────────────────────────────────────────────
-
-message SendOtpEmailRequest {
-  string channel    = 1;  // "EMAIL" | "PHONE"
-  string target     = 2;  // email hoặc phone
-  string otp_type   = 3;  // "VERIFY_EMAIL" | "RESET_PASSWORD" | "LOGIN_MFA" | "VERIFY_PHONE"
-  bytes  context_id = 4;  // optional — identity_id, user_id, v.v.
-}
-
-message SendOtpEmailResponse {
-  bytes otp_id     = 1;
-  int64 expires_at = 2;  // Unix timestamp (seconds)
-}
-
-// ── VerifyOtp ─────────────────────────────────────────────────────────────────
-
-message VerifyOtpRequest {
-  bytes  otp_id = 1;
-  string code   = 2;  // 6-digit code người dùng nhập
-}
-
-message VerifyOtpResponse {
-  bool success = 1;
+  rpc SendEmail (SendEmailRequest) returns (SendEmailResponse);
 }
 
 // ── SendEmail ─────────────────────────────────────────────────────────────────
 
 message SendEmailRequest {
-  string to            = 1;
-  string subject       = 2;
-  string template_name = 3;
-  string template_data = 4;  // JSON object string: {"key": "value"}
+  string to      = 1;  // recipient email address
+  string subject = 2;  // email subject line
+
+  oneof content {
+    string          body = 3;  // pre-rendered HTML or plain text
+    TemplateContent tmpl = 4;  // render from a named template
+  }
+}
+
+message TemplateContent {
+  string              template_name = 1;  // e.g. "otp-email", "order-confirmation"
+  map<string, string> context       = 2;  // template variables (all values as strings)
 }
 
 message SendEmailResponse {
-  bytes notification_id = 1;
+  bytes notification_id = 1;  // 24-byte KSUID — for logging and traceability
 }

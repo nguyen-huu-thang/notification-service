@@ -17,10 +17,10 @@ External Clients (gRPC + mTLS)
         ↓
    Domain Layer (domain/)         ← pure Python dataclasses, no framework dependency
         ↑
-Infrastructure Layer (infrastructure/) ← SMTP, Jinja2, SQLAlchemy, mTLS
+Infrastructure Layer (infrastructure/) ← SMTP, Jinja2, mTLS
 ```
 
-The domain layer has no knowledge of SQLAlchemy, aiosmtplib, Jinja2, or gRPC. The infrastructure layer has no knowledge of use case logic. Dependencies always point inward toward the domain.
+The domain layer has no knowledge of aiosmtplib, Jinja2, or gRPC. The infrastructure layer has no knowledge of use case logic. Dependencies always point inward toward the domain.
 
 ---
 
@@ -39,52 +39,32 @@ app/
 │
 ├── application/
 │   ├── usecase/                              ← orchestrate: validate → domain → infra → return
-│   │   ├── email/
-│   │   │   └── SendEmailUseCase.py
-│   │   └── otp/
-│   │       ├── SendOtpEmailUseCase.py
-│   │       └── VerifyOtpUseCase.py
+│   │   └── email/
+│   │       └── SendEmailUseCase.py
 │   ├── port/
 │   │   └── outbound/                         ← Protocol interfaces (excluded from DI scan)
-│   │       ├── email/
-│   │       │   ├── EmailSenderPort.py
-│   │       │   └── TemplatePort.py
-│   │       └── otp/
-│   │           ├── SaveOtpPort.py
-│   │           └── LoadOtpPort.py
+│   │       └── email/
+│   │           ├── EmailSenderPort.py
+│   │           └── TemplatePort.py
 │   └── dto/                                  ← Pydantic models (excluded from DI scan)
-│       ├── email/
-│       │   ├── SendEmailCommand.py
-│       │   └── SendEmailResult.py
-│       └── otp/
-│           ├── SendOtpCommand.py
-│           ├── SendOtpResult.py
-│           ├── VerifyOtpCommand.py
-│           └── VerifyOtpResult.py
+│       └── email/
+│           ├── SendEmailCommand.py
+│           └── SendEmailResult.py
 │
 ├── domain/                                   ← pure Python (excluded from DI scan)
-│   ├── email/
-│   │   └── EmailNotification.py              ← frozen dataclass
-│   └── otp/
-│       └── OtpRecord.py                      ← frozen dataclass
+│   └── email/
+│       └── EmailNotification.py              ← frozen dataclass
 │
 ├── infrastructure/
 │   ├── smtp/
 │   │   └── SmtpEmailAdapter.py               ← implements EmailSenderPort
-│   ├── template/
-│   │   ├── JinjaTemplateAdapter.py           ← implements TemplatePort
-│   │   └── templates/                        ← Jinja2 HTML templates
-│   │       ├── otp-email.html
-│   │       └── ...
-│   └── persistence/
-│       ├── entity/
-│       │   └── otp/
-│       │       └── OtpRecordEntity.py        ← SQLAlchemy ORM entity
-│       ├── mapper/
-│       │   └── OtpRecordMapper.py            ← Entity ↔ Domain mapper
-│       └── repository/
-│           └── otp/
-│               └── SqlAlchemyOtpRepository.py ← implements SaveOtpPort + LoadOtpPort
+│   └── template/
+│       ├── JinjaTemplateAdapter.py           ← implements TemplatePort
+│       └── templates/                        ← Jinja2 HTML templates
+│           ├── otp-email.html.j2
+│           ├── login-alert.html.j2
+│           ├── password-changed.html.j2
+│           └── ...
 │
 ├── config/
 │   └── dependency.py                         ← DI binding: Protocol → Implementation
@@ -92,17 +72,12 @@ app/
 ├── common/
 │   ├── constants/
 │   │   ├── NotificationChannel.py            ← EMAIL, PHONE
-│   │   ├── OtpType.py                        ← VERIFY_EMAIL, RESET_PASSWORD, LOGIN_MFA, ...
-│   │   └── NotificationStatus.py             ← PENDING, SENT, FAILED
+│   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED
 │   ├── exception/
-│   │   ├── InvalidRecipientError.py
-│   │   ├── OtpNotFoundError.py
-│   │   ├── OtpExpiredError.py
-│   │   ├── OtpAlreadyUsedError.py
-│   │   └── OtpVerificationFailedError.py
+│   │   └── InvalidRecipientError.py
 │   └── util/
 │       ├── IdGenerator.py                    ← KSUID 24 bytes
-│       └── Normalizer.py                     ← email/phone normalization
+│       └── Normalizer.py                     ← email normalization
 │
 └── main.py
 ```
@@ -117,19 +92,18 @@ Domain objects in `domain/` are **frozen Python dataclasses** — no ORM annotat
 
 ```python
 @dataclass(frozen=True)
-class OtpRecord:
-    otp_id: bytes
-    channel: OtpChannel
-    target: str
-    otp_hash: str
-    otp_type: OtpType
-    context_id: bytes
-    expires_at: datetime
-    is_used: bool
-    created_at: datetime
+class EmailNotification:
+    notification_id: bytes
+    recipient:       str
+    subject:         str
+    body:            str
+    channel:         NotificationChannel
+    status:          NotificationStatus
+    created_at:      datetime
+    sent_at:         datetime | None = None
 
-    def mark_used(self) -> 'OtpRecord':
-        return replace(self, is_used=True)  # returns new instance
+    def mark_sent(self, now: datetime) -> 'EmailNotification':
+        return replace(self, status=NotificationStatus.SENT, sent_at=now)
 ```
 
 State changes use `dataclasses.replace()` to return a new instance. No mutation.
@@ -153,14 +127,12 @@ Port interfaces are excluded from DI scan — they are binding targets, not impl
 Xime Framework uses **constructor injection exclusively**. No `@inject` decorators, no service locators.
 
 ```python
-class SendOtpEmailUseCase:
+class SendEmailUseCase:
     def __init__(self,
                  email_sender: EmailSenderPort,
-                 template: TemplatePort,
-                 save_otp: SaveOtpPort) -> None:
+                 template:     TemplatePort) -> None:
         self._email_sender = email_sender
         self._template     = template
-        self._save_otp     = save_otp
 ```
 
 ### Explicit DI Binding
@@ -171,21 +143,8 @@ All Protocol → Implementation bindings are declared explicitly in `config/depe
 dependency.bind({
     EmailSenderPort: SmtpEmailAdapter,
     TemplatePort:    JinjaTemplateAdapter,
-    SaveOtpPort:     SqlAlchemyOtpRepository,
-    LoadOtpPort:     SqlAlchemyOtpRepository,
 })
 ```
-
-### Split Ports by Use Case
-
-Rather than a single `OtpRepository` with many methods, ports are split by use case:
-
-```
-SaveOtpPort   ← only used by SendOtpEmailUseCase
-LoadOtpPort   ← only used by VerifyOtpUseCase
-```
-
-Each port reflects exactly one use case's dependency — cleaner boundaries, easier to test.
 
 ---
 
@@ -193,16 +152,14 @@ Each port reflects exactly one use case's dependency — cleaner boundaries, eas
 
 | Type | Pattern | Example |
 |---|---|---|
-| Domain object | `*` (PascalCase) | `OtpRecord`, `EmailNotification` |
-| SQLAlchemy entity | `*Entity` | `OtpRecordEntity` |
-| Repository implementation | `SqlAlchemy*Repository` | `SqlAlchemyOtpRepository` |
-| Port interface | `*Port` | `EmailSenderPort`, `SaveOtpPort` |
+| Domain object | `*` (PascalCase) | `EmailNotification` |
+| Port interface | `*Port` | `EmailSenderPort`, `TemplatePort` |
 | Infrastructure adapter | `*Adapter` | `SmtpEmailAdapter`, `JinjaTemplateAdapter` |
-| Use case | `*UseCase` | `SendOtpEmailUseCase`, `VerifyOtpUseCase` |
+| Use case | `*UseCase` | `SendEmailUseCase` |
 | gRPC handler | `*GrpcHandler` | `NotificationGrpcHandler` |
 | gRPC mapper | `*GrpcMapper` | `NotificationGrpcMapper` |
-| DTO command | `*Command` | `SendOtpCommand`, `VerifyOtpCommand` |
-| DTO result | `*Result` | `SendOtpResult`, `VerifyOtpResult` |
+| DTO command | `*Command` | `SendEmailCommand` |
+| DTO result | `*Result` | `SendEmailResult` |
 
 ---
 
@@ -217,7 +174,6 @@ application/port/
 common/constants/
 common/exception/
 api/grpc/mapper/        ← registered manually
-infrastructure/persistence/mapper/  ← instantiated directly
 ```
 
 ---
@@ -225,40 +181,21 @@ infrastructure/persistence/mapper/  ← instantiated directly
 ## Use Case Flow
 
 ```
-gRPC Request (e.g. SendOtpEmail)
+gRPC Request (SendEmail)
       ↓
 NotificationGrpcHandler
-      → maps proto message to SendOtpCommand (via NotificationGrpcMapper)
+      → maps proto message to SendEmailCommand (via NotificationGrpcMapper)
       ↓
-SendOtpEmailUseCase.execute(command)
-      → generate OTP code
-      → hash OTP code
-      → create OtpRecord (frozen dataclass)
-      → SaveOtpPort.save(otp_record)     ← persists to PostgreSQL
-      → TemplatePort.render(...)         ← renders Jinja2 template
-      → EmailSenderPort.send(...)        ← sends via SMTP
-      → return SendOtpResult
+SendEmailUseCase.execute(command)
+      → normalize recipient email
+      → TemplatePort.render(template_name, context)   ← renders Jinja2 template
+      → EmailSenderPort.send(to, subject, body)       ← sends via SMTP
+      → return SendEmailResult(notification_id)
       ↓
 NotificationGrpcHandler
-      → maps SendOtpResult to proto response
+      → maps SendEmailResult to proto response
       ↓
 gRPC Response
 ```
 
----
-
-## Transaction Handling
-
-Use cases that write to the database wrap their operations in an explicit transaction:
-
-```python
-async def execute(self, command: SendOtpCommand) -> SendOtpResult:
-    async with self.transaction():
-        otp_record = OtpRecord(...)
-        await self._save_otp.save(otp_record)
-        # email send happens after successful commit
-    await self._email_sender.send(...)
-    return SendOtpResult(...)
-```
-
-Email is sent after the transaction commits — if the SMTP call fails, the OTP record is already saved and the caller can decide whether to retry.
+No database operations — Notification Service is stateless.

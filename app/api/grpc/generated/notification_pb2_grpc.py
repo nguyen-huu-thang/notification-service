@@ -34,16 +34,6 @@ class NotificationServiceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.SendOtpEmail = channel.unary_unary(
-                '/notification.NotificationService/SendOtpEmail',
-                request_serializer=notification__pb2.SendOtpEmailRequest.SerializeToString,
-                response_deserializer=notification__pb2.SendOtpEmailResponse.FromString,
-                _registered_method=True)
-        self.VerifyOtp = channel.unary_unary(
-                '/notification.NotificationService/VerifyOtp',
-                request_serializer=notification__pb2.VerifyOtpRequest.SerializeToString,
-                response_deserializer=notification__pb2.VerifyOtpResponse.FromString,
-                _registered_method=True)
         self.SendEmail = channel.unary_unary(
                 '/notification.NotificationService/SendEmail',
                 request_serializer=notification__pb2.SendEmailRequest.SerializeToString,
@@ -54,18 +44,6 @@ class NotificationServiceStub:
 class NotificationServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
-    def SendOtpEmail(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def VerifyOtp(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def SendEmail(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -75,16 +53,6 @@ class NotificationServiceServicer:
 
 def add_NotificationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'SendOtpEmail': grpc.unary_unary_rpc_method_handler(
-                    servicer.SendOtpEmail,
-                    request_deserializer=notification__pb2.SendOtpEmailRequest.FromString,
-                    response_serializer=notification__pb2.SendOtpEmailResponse.SerializeToString,
-            ),
-            'VerifyOtp': grpc.unary_unary_rpc_method_handler(
-                    servicer.VerifyOtp,
-                    request_deserializer=notification__pb2.VerifyOtpRequest.FromString,
-                    response_serializer=notification__pb2.VerifyOtpResponse.SerializeToString,
-            ),
             'SendEmail': grpc.unary_unary_rpc_method_handler(
                     servicer.SendEmail,
                     request_deserializer=notification__pb2.SendEmailRequest.FromString,
@@ -100,60 +68,6 @@ def add_NotificationServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class NotificationService:
     """Missing associated documentation comment in .proto file."""
-
-    @staticmethod
-    def SendOtpEmail(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/notification.NotificationService/SendOtpEmail',
-            notification__pb2.SendOtpEmailRequest.SerializeToString,
-            notification__pb2.SendOtpEmailResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def VerifyOtp(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/notification.NotificationService/VerifyOtp',
-            notification__pb2.VerifyOtpRequest.SerializeToString,
-            notification__pb2.VerifyOtpResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def SendEmail(request,

@@ -71,7 +71,7 @@ If Trust Service is unavailable:
 
 ## Identity Service Integration
 
-Identity Service is the **primary caller** of Notification Service within Base Platform. It triggers OTP flows for authentication events.
+Identity Service is the **primary caller** of Notification Service for authentication events. It owns the OTP lifecycle and calls Notification Service only to deliver the email.
 
 ### Login MFA
 
@@ -79,34 +79,27 @@ Identity Service is the **primary caller** of Notification Service within Base P
 User attempts login with MFA enabled
       ↓
 Identity Service
+  → generate OTP code
+  → save HMAC(otp_code) in its own database
   → gRPC + mTLS → Notification Service
-  SendOtpEmailRequest {
-    channel:    "EMAIL",
-    target:     "user@example.com",
-    otp_type:   "LOGIN_MFA",
-    context_id: <identity_id>
+  SendEmailRequest {
+    to:      "user@example.com",
+    subject: "Your login verification code",
+    tmpl: {
+      template_name: "otp-email",
+      context: { "otp_code": "847291", "expires_min": "5" }
+    }
   }
       ↓
-Notification Service
-  → generate OTP
-  → save OtpRecord (expires 5 min)
-  → send email
-  → return otp_id + expires_at
+Notification Service → renders template → sends email → returns notification_id
       ↓
-Identity Service
-  → store otp_id in session
-  → return challenge response to client
+Identity Service → store otp_id in session → return challenge response to client
       ↓
 User submits OTP code
       ↓
 Identity Service
-  → gRPC + mTLS → Notification Service
-  VerifyOtpRequest { otp_id, code }
-      ↓
-Notification Service
-  → verify → mark used → return success
-      ↓
-Identity Service
+  → verify HMAC(submitted_code) == stored hash
+  → mark OTP as used in its own database
   → issue JWT + refresh token
 ```
 
@@ -116,15 +109,13 @@ Identity Service
 User registers with email address
       ↓
 Identity Service
-  → SendOtpEmail { otp_type: "VERIFY_EMAIL", target: email, context_id: identity_id }
+  → generate OTP → store hash → SendEmail { template: "otp-email", otp_code, ... }
       ↓
-Notification Service → sends OTP email
+Notification Service → sends email
       ↓
-Identity Service stores otp_id
+Identity Service stores otp_id + waits
       ↓
-User submits OTP → Identity Service → VerifyOtp
-      ↓
-Notification Service confirms → Identity Service marks email as verified
+User submits OTP → Identity Service verifies locally → marks email as verified
 ```
 
 ### Password Reset
@@ -133,20 +124,33 @@ Notification Service confirms → Identity Service marks email as verified
 User requests password reset
       ↓
 Identity Service
-  → SendOtpEmail { otp_type: "RESET_PASSWORD", target: email, context_id: identity_id }
+  → generate OTP → store hash → SendEmail { template: "otp-email", otp_code, ... }
       ↓
-Notification Service → sends reset OTP email
+Notification Service → sends email
       ↓
-User submits OTP → Identity Service → VerifyOtp
+User submits OTP → Identity Service verifies locally → authorizes password change
+```
+
+### Login Alert (no OTP)
+
+```
+Suspicious login detected
       ↓
-Notification Service confirms → Identity Service authorizes password change
+Identity Service
+  → SendEmail {
+      to:      "user@example.com",
+      subject: "New login detected",
+      tmpl:    { template_name: "login-alert", context: { "device": "...", "location": "..." } }
+    }
+      ↓
+Notification Service → sends alert email
 ```
 
 ---
 
 ## User Service Integration
 
-User Service calls Notification Service for credential change confirmation flows.
+User Service calls Notification Service for credential change confirmation flows. It also owns the OTP lifecycle for these flows.
 
 ### Email Change Confirmation
 
@@ -154,17 +158,15 @@ User Service calls Notification Service for credential change confirmation flows
 User requests email address change
       ↓
 User Service
-  → SendOtpEmail {
-      otp_type:   "CONFIRM_EMAIL_CHANGE",
-      target:     new_email,
-      context_id: user_id
+  → generate OTP → store hash
+  → SendEmail {
+      to:   new_email,
+      tmpl: { template_name: "otp-email", context: { "otp_code": "...", "action": "confirm your new email" } }
     }
       ↓
 Notification Service → sends OTP to new email
       ↓
-User submits code → User Service → VerifyOtp
-      ↓
-Notification Service confirms → User Service updates email address
+User submits code → User Service verifies locally → updates email address
 ```
 
 ### Phone Confirmation
@@ -173,24 +175,19 @@ Notification Service confirms → User Service updates email address
 User adds/changes phone number
       ↓
 User Service
-  → SendOtpEmail (or future SendOtpSms) {
-      otp_type:   "CONFIRM_PHONE",
-      target:     phone_number,
-      context_id: user_id
-    }
+  → generate OTP → store hash
+  → (future) SendSms { to: phone_number, template: "otp-sms", context: { "otp_code": "..." } }
       ↓
-Notification Service → sends OTP
+Notification Service → sends SMS (when implemented)
       ↓
-User submits code → User Service → VerifyOtp
-      ↓
-Notification Service confirms → User Service stores verified phone number
+User submits code → User Service verifies locally → stores verified phone number
 ```
 
 ---
 
 ## Application Layer Integration
 
-Application services in the business layer (ecommerce, social, SaaS, AI) call Notification Service for domain-specific notifications. They use `SendEmail` with named templates.
+Application services in the business layer (ecommerce, social, SaaS, AI) call Notification Service for domain-specific notifications using `SendEmail` with named templates.
 
 ### Order Confirmation (example)
 
@@ -198,8 +195,8 @@ Application services in the business layer (ecommerce, social, SaaS, AI) call No
 Order Service (application layer)
   → gRPC + mTLS → Notification Service
   SendEmailRequest {
-    to:            "buyer@example.com",
-    subject:       "Your order has been confirmed",
+    to:      "buyer@example.com",
+    subject: "Your order has been confirmed",
     tmpl: {
       template_name: "order-confirmation",
       context: {
@@ -211,13 +208,8 @@ Order Service (application layer)
     }
   }
       ↓
-Notification Service
-  → render Jinja2 template
-  → send email
-  → return notification_id
+Notification Service → render Jinja2 template → send email → return notification_id
 ```
-
-Application services do not know the SMTP host, template engine, or OTP subsystem. They only specify what to send and to whom.
 
 ---
 
@@ -230,12 +222,10 @@ Trust Service
 Notification Service
       │
       ├── Identity Service
-      │     ├── SendOtpEmail (LOGIN_MFA, VERIFY_EMAIL, RESET_PASSWORD)
-      │     └── VerifyOtp
+      │     └── SendEmail (otp-email, login-alert, password-changed, ...)
       │
       ├── User Service
-      │     ├── SendOtpEmail (CONFIRM_EMAIL_CHANGE, CONFIRM_PHONE)
-      │     └── VerifyOtp
+      │     └── SendEmail (otp-email, password-changed, ...)
       │
       └── Application Services (any)
             └── SendEmail (custom templates per use case)
@@ -249,3 +239,4 @@ Notification Service
 - Does not fetch user preferences or contact details — all targeting is provided by the caller
 - Does not verify end-user identity — caller verification is done via mTLS at the service level
 - Does not participate in any authentication or authorization decision — it only delivers
+- Does not store OTP records — the caller manages OTP state
