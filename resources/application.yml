@@ -1,0 +1,31 @@
+# Notification Service — Runtime Configuration
+# Operator-configurable. Không commit thông tin nhạy cảm thật.
+# Xem thêm: application-local.yml (gitignored) cho override cục bộ.
+
+grpc:
+  port: 50051
+  tls:
+    enabled: false      # bật khi deploy production
+
+database:
+  url: "postgresql+asyncpg://thang:123456@localhost:5432/notification_service"
+  pool_size: 5
+  max_overflow: 10
+  echo: false
+
+smtp:
+  host: "localhost"
+  port: 1025            # MailHog cho dev
+  username: ""
+  password: ""
+  use_tls: false
+  sender: "noreply@xime.local"
+
+template:
+  dir: "app/infrastructure/template/templates"
+
+notification:
+  otp:
+    ttl_minutes: 5
+    length: 6
+    hmac_secret: "dev-secret-change-in-production"  # override bằng env var trong production

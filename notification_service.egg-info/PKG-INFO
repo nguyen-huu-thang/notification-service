@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: notification-service
+Version: 0.1.0
+Summary: Notification Service — email/SMS notification infrastructure for Base Platform (Xime ecosystem)
+Requires-Python: >=3.12
+Requires-Dist: sqlalchemy[asyncio]>=2.0
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: alembic>=1.13
+Requires-Dist: grpcio>=1.62
+Requires-Dist: grpcio-tools>=1.62
+Requires-Dist: protobuf>=5.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: aiosmtplib>=3.0
+Requires-Dist: jinja2>=3.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: aiosqlite>=0.20; extra == "dev"

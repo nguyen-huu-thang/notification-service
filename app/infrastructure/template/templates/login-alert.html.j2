@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Đăng nhập mới</title>
+</head>
+<body style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+  <h2 style="color: #1a1a1a;">Phát hiện đăng nhập mới</h2>
+  <p style="color: #444;">Tài khoản của bạn vừa được đăng nhập từ thiết bị/vị trí mới.</p>
+  <table style="width: 100%; background: #f8f9fa; border-radius: 8px; padding: 16px; border-collapse: collapse;">
+    <tr>
+      <td style="padding: 6px 0; color: #888; font-size: 13px;">Thời gian</td>
+      <td style="padding: 6px 0; color: #1a1a1a;">{{ login_time }}</td>
+    </tr>
+    {% if ip_address %}
+    <tr>
+      <td style="padding: 6px 0; color: #888; font-size: 13px;">Địa chỉ IP</td>
+      <td style="padding: 6px 0; color: #1a1a1a;">{{ ip_address }}</td>
+    </tr>
+    {% endif %}
+    {% if device %}
+    <tr>
+      <td style="padding: 6px 0; color: #888; font-size: 13px;">Thiết bị</td>
+      <td style="padding: 6px 0; color: #1a1a1a;">{{ device }}</td>
+    </tr>
+    {% endif %}
+  </table>
+  <p style="color: #d93025; font-size: 13px; margin-top: 20px;">
+    Nếu đây không phải bạn, hãy đổi mật khẩu ngay.
+  </p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="color: #aaa; font-size: 12px;">Xime Platform — email tự động, vui lòng không reply.</p>
+</body>
+</html>
