@@ -3,9 +3,19 @@
 # Xem thêm: application-local.yml (gitignored) cho override cục bộ.
 
 grpc:
-  port: 50051
+  port: 50052
   tls:
-    enabled: false      # bật khi deploy production
+    enabled: true
+    cert_file: ./runtime/security/server.crt
+    key_file:  ./runtime/security/server.key
+    ca_file:   ./runtime/security/ca.pem
+    mutual:    true
+
+database:
+  url: "postgresql+asyncpg://thang:123456@localhost:5432/notification_service"
+  pool_size: 5
+  max_overflow: 10
+  echo: false
 
 smtp:
   host: "localhost"
@@ -17,4 +27,19 @@ smtp:
 
 template:
   dir: "app/infrastructure/template/templates"
+
+trust:
+  grpc:
+    host: "localhost"
+    port: 9090
+  service_id: "notification-service"
+  # Bootstrap file — chứa cert ban đầu, xóa sau khi đổi cert lần đầu
+  bootstrap:
+    path: "./runtime/security/bootstrap.txt"
+  # Root CA cert PEM — dùng để verify Trust Service trong mTLS
+  ca_cert:
+    path: "./runtime/security/ca.pem"
+  # Fernet key mã hóa private_key & refresh_token trước khi lưu DB.
+  # Phải ổn định giữa các lần chạy. Override qua env TRUST_CERT_ENCRYPTION_KEY.
+  cert_encryption_key: "Zlv8oRUMO-Oywbla3KsY3OpzpBrFYMXjETfzehKna6A="
 

@@ -1,9 +1,24 @@
 from xime.core.config.binding import BindingConfig
+from xime.core.transaction.manager import TransactionManager
+from xime.starters.sqlalchemy import SqlAlchemyTransactionManager
 
 from app.application.port.outbound.email.EmailSenderPort import EmailSenderPort
 from app.application.port.outbound.email.TemplatePort import TemplatePort
 from app.infrastructure.smtp.SmtpEmailAdapter import SmtpEmailAdapter
 from app.infrastructure.template.JinjaTemplateAdapter import JinjaTemplateAdapter
+
+# Trust ports
+from app.application.port.outbound.trust.LoadCertificatePort import LoadCertificatePort
+from app.application.port.outbound.trust.SaveCertificatePort import SaveCertificatePort
+from app.application.port.outbound.trust.LoadVerificationKeyPort import LoadVerificationKeyPort
+from app.application.port.outbound.trust.SaveVerificationKeyPort import SaveVerificationKeyPort
+
+# Trust repositories
+from app.infrastructure.persistence.repository.trust.TrustCertificateRepository import TrustCertificateRepository
+from app.infrastructure.persistence.repository.trust.TrustVerificationKeyRepository import TrustVerificationKeyRepository
+
+# Bootstrap (manual register — nằm ngoài package được scan)
+from app.integration.trust.bootstrap.Bootstrap import Bootstrap
 
 # ── Framework reads the `dependency` variable from this module at startup ─────
 #
@@ -14,14 +29,29 @@ from app.infrastructure.template.JinjaTemplateAdapter import JinjaTemplateAdapte
 
 dependency = BindingConfig()
 
+# ── Manual registration — classes outside auto-scan ───────────────────────────
+
+dependency.register(Bootstrap)
+
 # ── Package scan ──────────────────────────────────────────────────────────────
 
 dependency.scan(
+    # Framework starters
+    "xime.starters.sqlalchemy",
     # Application — use cases
     "app.application.usecase.email",
     # Infrastructure — email
     "app.infrastructure.smtp",
     "app.infrastructure.template",
+    # Infrastructure — Trust repositories
+    "app.infrastructure.persistence.repository.trust",
+    # Integration — Trust Service (all sub-packages)
+    "app.integration.trust.publicca",
+    "app.integration.trust.certificate",
+    "app.integration.trust.ssl",
+    "app.integration.trust.key",
+    "app.integration.trust.startup",
+    "app.integration.trust.scheduler",
     # API — gRPC mapper và handler
     "app.api.grpc.mapper",
     "app.api.grpc.external",
@@ -30,6 +60,14 @@ dependency.scan(
 # ── Protocol → Implementation bindings ───────────────────────────────────────
 
 dependency.bind({
-    EmailSenderPort: SmtpEmailAdapter,
-    TemplatePort:    JinjaTemplateAdapter,
+    # Transaction
+    TransactionManager:         SqlAlchemyTransactionManager,
+    # Email
+    EmailSenderPort:            SmtpEmailAdapter,
+    TemplatePort:               JinjaTemplateAdapter,
+    # Trust ports → Trust repositories
+    LoadCertificatePort:        TrustCertificateRepository,
+    SaveCertificatePort:        TrustCertificateRepository,
+    LoadVerificationKeyPort:    TrustVerificationKeyRepository,
+    SaveVerificationKeyPort:    TrustVerificationKeyRepository,
 })
