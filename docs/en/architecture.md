@@ -33,6 +33,8 @@ app/
 │   └── grpc/
 │       ├── external/
 │       │   └── NotificationGrpcHandler.py    ← receives gRPC from other services
+│       ├── interceptor/
+│       │   └── AppExceptionInterceptor.py    ← catches AppException, redacts per channel, aborts with xime-error metadata
 │       ├── mapper/
 │       │   └── NotificationGrpcMapper.py     ← gRPC message ↔ Command/Result
 │       └── generated/                        ← protobuf generated code
@@ -52,8 +54,15 @@ app/
 │           └── SendEmailResult.py
 │
 ├── domain/                                   ← pure Python (excluded from DI scan)
-│   └── email/
-│       └── EmailNotification.py              ← frozen dataclass
+│   ├── email/
+│   │   └── EmailNotification.py              ← frozen dataclass
+│   └── error/                                ← framework-neutral error objects
+│       ├── Visibility.py                     ← PRIVATE / SYSTEM / PUBLIC
+│       ├── Channel.py                        ← GRPC_INTERNAL / REST_EXTERNAL
+│       ├── GrpcCode.py                        ← neutral gRPC status
+│       ├── ErrorDef.py                        ← descriptor of one error code
+│       ├── error_code.py                      ← error catalog (range 080000-089999)
+│       └── redaction.py                       ← channel-based redaction
 │
 ├── infrastructure/
 │   ├── smtp/
@@ -74,7 +83,7 @@ app/
 │   │   ├── NotificationChannel.py            ← EMAIL, PHONE
 │   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED
 │   ├── exception/
-│   │   └── InvalidRecipientError.py
+│   │   └── AppException.py                   ← AppException + PrivateError / SystemError / PublicError
 │   └── util/
 │       ├── IdGenerator.py                    ← KSUID 24 bytes
 │       └── Normalizer.py                     ← email normalization
@@ -199,3 +208,37 @@ gRPC Response
 ```
 
 No database operations — Notification Service is stateless.
+
+---
+
+## Error Codes & Exceptions
+
+The service follows the platform-wide error/exception standard (reference implementations: data-service and trust-service). Notification Service owns the **`080000 - 089999`** range, split into three zones by the thousands digit of the offset:
+
+| Zone | Range | Visibility | Who can read |
+| ---- | ----- | ---------- | ------------ |
+| Private | `080000 - 083999` | `PRIVATE` | service-internal only, redacted on every outbound channel |
+| System | `084000 - 086999` | `SYSTEM` | other services over gRPC mTLS, redacted toward browsers |
+| Public | `087000 - 089999` | `PUBLIC` | safe for clients/browsers on any channel |
+
+The catalog (`app/domain/error/error_code.py`) contains the shared Common block (`E000000 - E007008`) plus the Notification block:
+
+| errorKey | Zone | gRPC status | Meaning |
+| -------- | ---- | ----------- | ------- |
+| `E080000` | Private | INTERNAL | Internal Notification Service error |
+| `E080001` | Private | INTERNAL | Email template render error |
+| `E084000` | System | UNAVAILABLE | Transient email delivery failure, retryable |
+| `E087000` | Public | INVALID_ARGUMENT | Invalid recipient |
+| `E087001` | Public | INVALID_ARGUMENT | Missing content (template_name or body) |
+
+**Usage:** business code throws one of the three base classes `PrivateError` / `SystemError` / `PublicError` (in `common/exception/AppException.py`) carrying an `error_key` from the catalog:
+
+```python
+# Malformed recipient — client error
+raise PublicError("E087000")
+
+# Flaky SMTP — other services may retry
+raise SystemError("E084000")
+```
+
+**Redaction flow:** handlers do **not** catch errors. Every exception bubbles up to `AppExceptionInterceptor` (`api/grpc/interceptor/`), which redacts per the `GRPC_INTERNAL` channel (via `redaction.py`) then `abort`s with the matching status and `xime-error` / `xime-error-code` trailing metadata. Since gRPC here is service-to-service over mTLS, `SYSTEM` and `PUBLIC` pass through and only `PRIVATE` collapses to `E000000`. This service is gRPC-only, with no REST handler.

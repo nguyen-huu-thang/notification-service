@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosmtplib
 import pytest
 
-from app.common.exception.TransientDeliveryError import TransientDeliveryError
+from app.common.exception.AppException import SystemError
 from app.infrastructure.smtp.SmtpEmailAdapter import SmtpEmailAdapter
 
 
@@ -129,18 +129,20 @@ class TestSmtpAdapterSend:
                 await adapter.send("user@example.com", "S", "B")
 
     @pytest.mark.asyncio
-    async def test_connect_error_raises_transient_delivery_error(self, adapter):
+    async def test_connect_error_raises_system_error(self, adapter):
         with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
-                   side_effect=aiosmtplib.SMTPConnectError(421, "Connection refused")):
-            with pytest.raises(TransientDeliveryError):
+                   side_effect=aiosmtplib.SMTPConnectError("Connection refused")):
+            with pytest.raises(SystemError) as ei:
                 await adapter.send("user@example.com", "S", "B")
+            assert ei.value.error_key == "E084000"
 
     @pytest.mark.asyncio
-    async def test_server_disconnected_raises_transient_delivery_error(self, adapter):
+    async def test_server_disconnected_raises_system_error(self, adapter):
         with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
-                   side_effect=aiosmtplib.SMTPServerDisconnected()):
-            with pytest.raises(TransientDeliveryError):
+                   side_effect=aiosmtplib.SMTPServerDisconnected("disconnected")):
+            with pytest.raises(SystemError) as ei:
                 await adapter.send("user@example.com", "S", "B")
+            assert ei.value.error_key == "E084000"
 
     @pytest.mark.asyncio
     async def test_auth_error_propagates_unchanged(self, adapter):

@@ -4,7 +4,7 @@ from app.application.dto.email.SendEmailCommand import SendEmailCommand
 from app.application.dto.email.SendEmailResult import SendEmailResult
 from app.application.port.outbound.email.EmailSenderPort import EmailSenderPort
 from app.application.port.outbound.email.TemplatePort import TemplatePort
-from app.common.exception.InvalidRecipientError import InvalidRecipientError
+from app.common.exception.AppException import PublicError
 from app.common.util.IdGenerator import generate_id
 from app.common.util.Normalizer import normalize_email
 
@@ -29,7 +29,9 @@ class SendEmailUseCase:
         elif command.body:
             body = command.body
         else:
-            raise ValueError("Either template_name or body must be provided")
+            # Missing both template_name and body — client error.
+            # Thiếu cả template_name lẫn body — lỗi từ phía client.
+            raise PublicError("E087001")
 
         await self._email_sender.send(recipient, command.subject, body)
 
@@ -37,4 +39,6 @@ class SendEmailUseCase:
 
     def _validate_email(self, email: str) -> None:
         if not _EMAIL_RE.fullmatch(email):
-            raise InvalidRecipientError(email)
+            # Invalid recipient address — client error.
+            # Địa chỉ người nhận không hợp lệ — lỗi từ phía client.
+            raise PublicError("E087000")

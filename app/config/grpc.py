@@ -1,6 +1,8 @@
 from xime.adapters.grpc import configure_grpc_clients, configure_grpc_services, configure_grpc_tls
+from xime.adapters.grpc.interceptors import configure_grpc_interceptors
 
 from clients.trust import KeyDistributionServiceClient
+from app.api.grpc.interceptor.AppExceptionInterceptor import AppExceptionInterceptor
 from app.integration.trust.ssl.TrustGrpcCertificateProvider import TrustGrpcCertificateProvider
 from app.api.grpc.external.NotificationGrpcHandler import NotificationGrpcHandler
 from app.api.grpc.generated.notification_pb2_grpc import (
@@ -23,6 +25,16 @@ configure_grpc_services(
 # mTLS động: cert lấy từ resolver đồng bộ với Trust, đọc lại ở mỗi handshake
 # mới (rotate không cần restart). Bật/tắt vẫn nằm ở application.yml.
 configure_grpc_tls(provider=TrustGrpcCertificateProvider)
+
+# Platform error standard: this interceptor catches AppException, redacts per the
+# GRPC_INTERNAL channel, and aborts with xime-error / xime-error-code metadata.
+# It runs innermost (after the framework's built-in interceptors), so it sees the
+# handler's exception first and sets the final status.
+# Chuẩn mã lỗi platform: interceptor này bắt AppException, che theo kênh
+# GRPC_INTERNAL, abort kèm metadata xime-error / xime-error-code. Nó chạy innermost
+# (sau interceptor built-in của framework) nên thấy exception của handler trước và
+# đặt status cuối cùng.
+configure_grpc_interceptors([AppExceptionInterceptor()])
 
 # Outbound gRPC client to Trust. The framework builds a managed XimeGrpcChannel
 # from grpc.clients.trust in application.yml (host/port/deadline + dynamic mTLS)

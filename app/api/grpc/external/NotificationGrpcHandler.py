@@ -1,14 +1,12 @@
-import logging
-
-import grpc
-
 from app.api.grpc.generated.notification_pb2_grpc import NotificationServiceServicer
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.usecase.email.SendEmailUseCase import SendEmailUseCase
-from app.common.exception.InvalidRecipientError import InvalidRecipientError
-from app.common.exception.TransientDeliveryError import TransientDeliveryError
 
-_log = logging.getLogger(__name__)
+# Exceptions raised here propagate to AppExceptionInterceptor
+# (app/api/grpc/interceptor/AppExceptionInterceptor.py), which redacts per the
+# GRPC_INTERNAL channel and aborts with xime-error metadata. No per-method catch.
+# Exception ném ở đây tự lọt lên AppExceptionInterceptor, nơi che lỗi theo kênh
+# GRPC_INTERNAL và abort kèm metadata xime-error. Không bắt lỗi thủ công ở handler.
 
 
 class NotificationGrpcHandler(NotificationServiceServicer):
@@ -21,17 +19,6 @@ class NotificationGrpcHandler(NotificationServiceServicer):
         self._mapper = mapper
 
     async def SendEmail(self, request, context):
-        try:
-            command = self._mapper.to_send_email_command(request)
-            result = await self._send_email.execute(command)
-            return self._mapper.to_send_email_response(result)
-        except InvalidRecipientError as e:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
-        except ValueError as e:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
-        except TransientDeliveryError:
-            _log.warning("Transient delivery failure in SendEmail", exc_info=True)
-            await context.abort(grpc.StatusCode.UNAVAILABLE, "Notification service temporarily unavailable, please retry")
-        except Exception:
-            _log.exception("Unexpected error in SendEmail")
-            await context.abort(grpc.StatusCode.INTERNAL, "Internal error")
+        command = self._mapper.to_send_email_command(request)
+        result = await self._send_email.execute(command)
+        return self._mapper.to_send_email_response(result)

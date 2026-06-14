@@ -5,7 +5,7 @@ import aiosmtplib
 
 from xime.core.config.runtime import RuntimeConfig
 
-from app.common.exception.TransientDeliveryError import TransientDeliveryError
+from app.common.exception.AppException import SystemError
 
 _log = logging.getLogger(__name__)
 
@@ -41,5 +41,7 @@ class SmtpEmailAdapter:
                 use_tls=self._use_tls,
             )
         except (aiosmtplib.SMTPConnectError, aiosmtplib.SMTPServerDisconnected) as e:
-            raise TransientDeliveryError(f"SMTP connection failed: {e}") from e
+            # Transient SMTP failure — caller may retry (SYSTEM, UNAVAILABLE).
+            # Lỗi SMTP tạm thời — caller có thể thử lại (SYSTEM, UNAVAILABLE).
+            raise SystemError("E084000") from e
         _log.info("Email sent to=%s subject=%r", to, subject)

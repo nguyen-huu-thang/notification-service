@@ -5,7 +5,7 @@ import pytest
 
 from app.application.dto.email.SendEmailCommand import SendEmailCommand
 from app.application.usecase.email.SendEmailUseCase import SendEmailUseCase
-from app.common.exception.InvalidRecipientError import InvalidRecipientError
+from app.common.exception.AppException import PublicError
 
 
 # ---------------------------------------------------------------------------
@@ -103,29 +103,34 @@ class TestSendEmailUseCase:
     @pytest.mark.asyncio
     async def test_missing_template_and_body_raises(self):
         uc = self._make_uc()
-        with pytest.raises(ValueError):
+        with pytest.raises(PublicError) as ei:
             await uc.execute(self._make_cmd(template_name=None, body=None))
+        assert ei.value.error_key == "E087001"
 
     @pytest.mark.asyncio
     async def test_invalid_email_raises(self):
         uc = self._make_uc()
-        with pytest.raises(InvalidRecipientError):
+        with pytest.raises(PublicError) as ei:
             await uc.execute(self._make_cmd(to="not-an-email"))
+        assert ei.value.error_key == "E087000"
 
     @pytest.mark.asyncio
     async def test_empty_email_raises(self):
         uc = self._make_uc()
-        with pytest.raises(InvalidRecipientError):
+        with pytest.raises(PublicError) as ei:
             await uc.execute(self._make_cmd(to=""))
+        assert ei.value.error_key == "E087000"
 
     @pytest.mark.asyncio
     async def test_email_without_tld_raises(self):
         uc = self._make_uc()
-        with pytest.raises(InvalidRecipientError):
+        with pytest.raises(PublicError) as ei:
             await uc.execute(self._make_cmd(to="user@nodomain"))
+        assert ei.value.error_key == "E087000"
 
     @pytest.mark.asyncio
     async def test_email_with_dot_only_domain_raises(self):
         uc = self._make_uc()
-        with pytest.raises(InvalidRecipientError):
+        with pytest.raises(PublicError) as ei:
             await uc.execute(self._make_cmd(to="user@.com"))
+        assert ei.value.error_key == "E087000"
