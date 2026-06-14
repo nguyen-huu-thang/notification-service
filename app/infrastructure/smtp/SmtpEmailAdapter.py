@@ -5,6 +5,8 @@ import aiosmtplib
 
 from xime.core.config.runtime import RuntimeConfig
 
+from app.common.exception.TransientDeliveryError import TransientDeliveryError
+
 _log = logging.getLogger(__name__)
 
 
@@ -29,12 +31,15 @@ class SmtpEmailAdapter:
         msg["From"] = self._sender
         msg["To"] = to
 
-        await aiosmtplib.send(
-            msg,
-            hostname=self._host,
-            port=self._port,
-            username=self._username or None,
-            password=self._password or None,
-            use_tls=self._use_tls,
-        )
+        try:
+            await aiosmtplib.send(
+                msg,
+                hostname=self._host,
+                port=self._port,
+                username=self._username or None,
+                password=self._password or None,
+                use_tls=self._use_tls,
+            )
+        except (aiosmtplib.SMTPConnectError, aiosmtplib.SMTPServerDisconnected) as e:
+            raise TransientDeliveryError(f"SMTP connection failed: {e}") from e
         _log.info("Email sent to=%s subject=%r", to, subject)

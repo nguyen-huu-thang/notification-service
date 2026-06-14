@@ -1,8 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-import grpc
-import grpc.aio
+from xime.core.exception.framework import RemoteServiceUnavailable
 from xime.core.transaction.manager import TransactionManager
 
 from app.application.port.outbound.trust.LoadVerificationKeyPort import LoadVerificationKeyPort
@@ -46,15 +45,12 @@ class VerificationKeySynchronizer:
                 await self._save.save_all(keys)
             self._cache.update(keys)
             _log.info("Verification keys synchronized from Trust Service: %d keys.", len(keys))
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.UNAVAILABLE:
-                # Trust Service not running — expected in dev/partial deployments.
-                # Tiếp tục với keys từ DB, không cần báo lỗi.
-                _log.debug("Trust Service is not reachable — using keys from DB.")
-            else:
-                _log.warning(
-                    "Failed to fetch verification keys from Trust Service — falling back to DB. Error: %s", e
-                )
+        except RemoteServiceUnavailable:
+            # Trust Service not running — expected in dev/partial deployments.
+            # No realtime dependency on Trust: fall back to DB-cached keys quietly.
+            # Trust không chạy — bình thường khi dev/triển khai từng phần. Không
+            # phụ thuộc realtime vào Trust: lặng lẽ dùng key đã cache trong DB.
+            _log.debug("Trust Service is not reachable — using keys from DB.")
             await self._load_from_db()
         except Exception as e:
             _log.warning(

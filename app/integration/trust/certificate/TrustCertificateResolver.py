@@ -1,5 +1,3 @@
-import threading
-
 from app.domain.trust.Certificate import Certificate
 
 
@@ -8,11 +6,9 @@ class TrustCertificateResolver:
 
     def __init__(self) -> None:
         self._cert: Certificate | None = None
-        self._lock = threading.Lock()
 
     def update(self, cert: Certificate) -> None:
-        with self._lock:
-            self._cert = cert
+        self._cert = cert
 
     def current(self) -> Certificate:
         cert = self._cert

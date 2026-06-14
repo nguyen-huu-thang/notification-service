@@ -38,9 +38,10 @@ select = ["E", "W", "F", "I", "UP"]
 ignore = ["E501"]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "clients*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 testpaths = ["test"]
 addopts = "--import-mode=importlib"
+pythonpath = [".", "app"]

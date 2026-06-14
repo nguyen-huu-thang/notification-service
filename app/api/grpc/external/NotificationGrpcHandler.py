@@ -6,6 +6,7 @@ from app.api.grpc.generated.notification_pb2_grpc import NotificationServiceServ
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.usecase.email.SendEmailUseCase import SendEmailUseCase
 from app.common.exception.InvalidRecipientError import InvalidRecipientError
+from app.common.exception.TransientDeliveryError import TransientDeliveryError
 
 _log = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class NotificationGrpcHandler(NotificationServiceServicer):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
         except ValueError as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        except TransientDeliveryError:
+            _log.warning("Transient delivery failure in SendEmail", exc_info=True)
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "Notification service temporarily unavailable, please retry")
         except Exception:
             _log.exception("Unexpected error in SendEmail")
             await context.abort(grpc.StatusCode.INTERNAL, "Internal error")

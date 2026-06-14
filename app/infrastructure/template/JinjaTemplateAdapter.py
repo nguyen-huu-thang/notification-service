@@ -29,5 +29,8 @@ class JinjaTemplateAdapter:
                   len(list(self._template_dir.glob("*.j2"))))
 
     async def render(self, template_name: str, context: dict) -> str:
-        template = self._env.get_template(template_name)
+        try:
+            template = self._env.get_template(template_name)
+        except TemplateNotFound:
+            raise ValueError(f"Template not found: {template_name!r}")
         return template.render(**context)

@@ -1,96 +1,12 @@
-from datetime import datetime, timezone
-
 import pytest
 
 from app.application.dto.email.SendEmailCommand import SendEmailCommand
 from app.application.dto.email.SendEmailResult import SendEmailResult
-from app.application.dto.otp.SendOtpCommand import SendOtpCommand
-from app.application.dto.otp.SendOtpResult import SendOtpResult
-from app.application.dto.otp.VerifyOtpCommand import VerifyOtpCommand
-from app.application.dto.otp.VerifyOtpResult import VerifyOtpResult
-from app.common.constants.NotificationChannel import NotificationChannel
-from app.common.constants.OtpType import OtpType
 from app.common.util.IdGenerator import generate_id
-
-_NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-_OTP_ID = generate_id()
-
-
-class TestSendOtpCommand:
-    def test_valid_email_channel(self):
-        cmd = SendOtpCommand(
-            channel=NotificationChannel.EMAIL,
-            target="user@example.com",
-            otp_type=OtpType.VERIFY_EMAIL,
-        )
-        assert cmd.channel == NotificationChannel.EMAIL
-        assert cmd.otp_type == OtpType.VERIFY_EMAIL
-        assert cmd.context_id is None
-
-    def test_context_id_optional(self):
-        cmd = SendOtpCommand(
-            channel=NotificationChannel.EMAIL,
-            target="user@example.com",
-            otp_type=OtpType.LOGIN_MFA,
-        )
-        assert cmd.context_id is None
-
-    def test_context_id_can_be_set(self):
-        ctx = generate_id()
-        cmd = SendOtpCommand(
-            channel=NotificationChannel.EMAIL,
-            target="user@example.com",
-            otp_type=OtpType.RESET_PASSWORD,
-            context_id=ctx,
-        )
-        assert cmd.context_id == ctx
-
-    def test_channel_accepts_string_value(self):
-        cmd = SendOtpCommand(
-            channel="EMAIL",
-            target="user@example.com",
-            otp_type="VERIFY_EMAIL",
-        )
-        assert cmd.channel is NotificationChannel.EMAIL
-        assert cmd.otp_type is OtpType.VERIFY_EMAIL
-
-    def test_missing_required_field_raises(self):
-        with pytest.raises(Exception):
-            SendOtpCommand(channel=NotificationChannel.EMAIL, otp_type=OtpType.VERIFY_EMAIL)
-
-
-class TestSendOtpResult:
-    def test_fields(self):
-        result = SendOtpResult(otp_id=_OTP_ID, expires_at=_NOW)
-        assert result.otp_id == _OTP_ID
-        assert result.expires_at == _NOW
-
-    def test_otp_id_bytes(self):
-        result = SendOtpResult(otp_id=_OTP_ID, expires_at=_NOW)
-        assert isinstance(result.otp_id, bytes)
-
-
-class TestVerifyOtpCommand:
-    def test_fields(self):
-        cmd = VerifyOtpCommand(otp_id=_OTP_ID, code="123456")
-        assert cmd.otp_id == _OTP_ID
-        assert cmd.code == "123456"
-
-    def test_missing_code_raises(self):
-        with pytest.raises(Exception):
-            VerifyOtpCommand(otp_id=_OTP_ID)
-
-
-class TestVerifyOtpResult:
-    def test_success_true(self):
-        assert VerifyOtpResult(success=True).success is True
-
-    def test_success_false(self):
-        assert VerifyOtpResult(success=False).success is False
 
 
 class TestSendEmailCommand:
-    def test_fields(self):
+    def test_fields_with_template(self):
         cmd = SendEmailCommand(
             to="user@example.com",
             subject="Hello",
@@ -101,19 +17,40 @@ class TestSendEmailCommand:
         assert cmd.subject == "Hello"
         assert cmd.template_name == "otp-email"
         assert cmd.template_data == {"otp_code": "123456"}
+        assert cmd.body is None
 
-    def test_template_data_empty_dict(self):
+    def test_fields_with_body(self):
         cmd = SendEmailCommand(
             to="user@example.com",
-            subject="S",
-            template_name="generic",
-            template_data={},
+            subject="Hello",
+            body="<p>Hi</p>",
         )
+        assert cmd.body == "<p>Hi</p>"
+        assert cmd.template_name is None
+
+    def test_template_data_defaults_to_empty_dict(self):
+        cmd = SendEmailCommand(to="user@example.com", subject="S")
         assert cmd.template_data == {}
 
     def test_missing_required_field_raises(self):
         with pytest.raises(Exception):
-            SendEmailCommand(to="user@example.com", subject="S", template_name="t")
+            SendEmailCommand(subject="S")
+
+    def test_template_data_over_limit_raises(self):
+        with pytest.raises(Exception):
+            SendEmailCommand(
+                to="user@example.com",
+                subject="S",
+                template_data={str(i): str(i) for i in range(101)},
+            )
+
+    def test_template_data_at_limit_is_accepted(self):
+        cmd = SendEmailCommand(
+            to="user@example.com",
+            subject="S",
+            template_data={str(i): str(i) for i in range(100)},
+        )
+        assert len(cmd.template_data) == 100
 
 
 class TestSendEmailResult:

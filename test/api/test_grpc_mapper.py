@@ -1,134 +1,61 @@
 """
-Tests cho NotificationGrpcMapper — chuyển đổi giữa proto message và DTO.
+Tests cho NotificationGrpcMapper — chuyển đổi giữa proto message và DTO email.
+Proto dùng oneof `content`: nhánh `tmpl` (template) hoặc `body` (HTML thô).
 """
-import json
-from datetime import datetime, timezone
-
-import pytest
-
 from app.api.grpc.generated import notification_pb2
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.dto.email.SendEmailResult import SendEmailResult
-from app.application.dto.otp.SendOtpResult import SendOtpResult
-from app.application.dto.otp.VerifyOtpResult import VerifyOtpResult
-from app.common.constants.NotificationChannel import NotificationChannel
-from app.common.constants.OtpType import OtpType
 from app.common.util.IdGenerator import generate_id
 
-_NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-_OTP_ID = generate_id()
 _NOTIF_ID = generate_id()
 
 mapper = NotificationGrpcMapper()
 
 
-class TestToSendOtpCommand:
-    def test_maps_channel_and_target(self):
-        req = notification_pb2.SendOtpEmailRequest(
-            channel="EMAIL",
-            target="user@example.com",
-            otp_type="VERIFY_EMAIL",
-        )
-        cmd = mapper.to_send_otp_command(req)
-        assert cmd.channel == NotificationChannel.EMAIL
-        assert cmd.target == "user@example.com"
-        assert cmd.otp_type == OtpType.VERIFY_EMAIL
-
-    def test_empty_context_id_becomes_none(self):
-        req = notification_pb2.SendOtpEmailRequest(
-            channel="EMAIL", target="u@e.com", otp_type="LOGIN_MFA",
-        )
-        cmd = mapper.to_send_otp_command(req)
-        assert cmd.context_id is None
-
-    def test_context_id_forwarded(self):
-        ctx = generate_id()
-        req = notification_pb2.SendOtpEmailRequest(
-            channel="EMAIL", target="u@e.com", otp_type="LOGIN_MFA",
-            context_id=ctx,
-        )
-        cmd = mapper.to_send_otp_command(req)
-        assert cmd.context_id == ctx
-
-    def test_all_otp_types_accepted(self):
-        for otp_type in OtpType:
-            req = notification_pb2.SendOtpEmailRequest(
-                channel="EMAIL", target="u@e.com", otp_type=otp_type.value,
-            )
-            cmd = mapper.to_send_otp_command(req)
-            assert cmd.otp_type == otp_type
-
-
-class TestToSendOtpResponse:
-    def test_otp_id_and_expires_at(self):
-        result = SendOtpResult(otp_id=_OTP_ID, expires_at=_NOW)
-        resp = mapper.to_send_otp_response(result)
-        assert resp.otp_id == _OTP_ID
-        assert resp.expires_at == int(_NOW.timestamp())
-
-    def test_expires_at_is_unix_timestamp(self):
-        result = SendOtpResult(otp_id=_OTP_ID, expires_at=_NOW)
-        resp = mapper.to_send_otp_response(result)
-        assert isinstance(resp.expires_at, int)
-        assert resp.expires_at > 0
-
-
-class TestToVerifyOtpCommand:
-    def test_maps_otp_id_and_code(self):
-        req = notification_pb2.VerifyOtpRequest(otp_id=_OTP_ID, code="123456")
-        cmd = mapper.to_verify_otp_command(req)
-        assert cmd.otp_id == _OTP_ID
-        assert cmd.code == "123456"
-
-
-class TestToVerifyOtpResponse:
-    def test_success_true(self):
-        resp = mapper.to_verify_otp_response(VerifyOtpResult(success=True))
-        assert resp.success is True
-
-    def test_success_false(self):
-        resp = mapper.to_verify_otp_response(VerifyOtpResult(success=False))
-        assert resp.success is False
-
-
 class TestToSendEmailCommand:
-    def test_maps_basic_fields(self):
+    def test_template_branch_maps_name_and_context(self):
         req = notification_pb2.SendEmailRequest(
             to="user@example.com",
             subject="Hello",
-            template_name="otp-email.html.j2",
-            template_data='{"otp_code": "123456"}',
+            tmpl=notification_pb2.TemplateContent(
+                template_name="otp-email",
+                context={"otp_code": "123456"},
+            ),
         )
         cmd = mapper.to_send_email_command(req)
         assert cmd.to == "user@example.com"
         assert cmd.subject == "Hello"
-        assert cmd.template_name == "otp-email.html.j2"
+        assert cmd.template_name == "otp-email"
         assert cmd.template_data == {"otp_code": "123456"}
+        assert cmd.body is None
 
-    def test_template_data_json_parsed(self):
-        data = {"key1": "val1", "key2": 42}
+    def test_template_context_multiple_values(self):
         req = notification_pb2.SendEmailRequest(
-            to="u@e.com", subject="S", template_name="t",
-            template_data=json.dumps(data),
+            to="u@e.com",
+            subject="S",
+            tmpl=notification_pb2.TemplateContent(
+                template_name="t",
+                context={"a": "1", "b": "2"},
+            ),
         )
         cmd = mapper.to_send_email_command(req)
-        assert cmd.template_data == data
+        assert cmd.template_data == {"a": "1", "b": "2"}
 
-    def test_empty_template_data_becomes_empty_dict(self):
+    def test_body_branch_maps_body(self):
         req = notification_pb2.SendEmailRequest(
-            to="u@e.com", subject="S", template_name="t",
-            template_data="",
+            to="user@example.com",
+            subject="Hello",
+            body="<p>raw html</p>",
         )
         cmd = mapper.to_send_email_command(req)
-        assert cmd.template_data == {}
+        assert cmd.body == "<p>raw html</p>"
+        assert cmd.template_name is None
 
-    def test_invalid_json_becomes_empty_dict(self):
-        req = notification_pb2.SendEmailRequest(
-            to="u@e.com", subject="S", template_name="t",
-            template_data="not-json",
-        )
+    def test_no_content_oneof_leaves_body_none(self):
+        req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S")
         cmd = mapper.to_send_email_command(req)
-        assert cmd.template_data == {}
+        assert cmd.body is None
+        assert cmd.template_name is None
 
 
 class TestToSendEmailResponse:

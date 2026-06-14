@@ -4,12 +4,21 @@
 
 grpc:
   port: 50052
+  # mTLS động: cert lấy từ TrustGrpcCertificateProvider (config/grpc.py),
+  # không dùng cert_file/key_file tĩnh. Rotate cert không cần restart.
   tls:
     enabled: true
-    cert_file: ./runtime/security/server.crt
-    key_file:  ./runtime/security/server.key
-    ca_file:   ./runtime/security/ca.pem
-    mutual:    true
+    mutual: true
+  # Outbound clients. "trust" khớp configure_grpc_clients("trust", ...) trong
+  # config/grpc.py. dynamic: true → channel tự rebuild khi cert rotate.
+  clients:
+    trust:
+      host: "localhost"      # = trust.grpc.host
+      port: 9090             # = trust.grpc.port
+      deadline_ms: 3000
+      tls:
+        enabled: true
+        dynamic: true
 
 database:
   url: "postgresql+asyncpg://thang:123456@localhost:5432/notification_service"

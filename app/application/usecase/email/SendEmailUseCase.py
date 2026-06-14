@@ -1,3 +1,5 @@
+import re
+
 from app.application.dto.email.SendEmailCommand import SendEmailCommand
 from app.application.dto.email.SendEmailResult import SendEmailResult
 from app.application.port.outbound.email.EmailSenderPort import EmailSenderPort
@@ -5,6 +7,8 @@ from app.application.port.outbound.email.TemplatePort import TemplatePort
 from app.common.exception.InvalidRecipientError import InvalidRecipientError
 from app.common.util.IdGenerator import generate_id
 from app.common.util.Normalizer import normalize_email
+
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 class SendEmailUseCase:
@@ -32,6 +36,5 @@ class SendEmailUseCase:
         return SendEmailResult(notification_id=generate_id())
 
     def _validate_email(self, email: str) -> None:
-        parts = email.split("@")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
+        if not _EMAIL_RE.fullmatch(email):
             raise InvalidRecipientError(email)

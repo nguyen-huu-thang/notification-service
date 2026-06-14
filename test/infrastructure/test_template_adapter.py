@@ -116,7 +116,6 @@ class TestPasswordChangedTemplate:
 
 class TestMissingTemplate:
     @pytest.mark.asyncio
-    async def test_raises_on_missing_template(self, adapter):
-        from jinja2 import TemplateNotFound
-        with pytest.raises(TemplateNotFound):
+    async def test_raises_value_error_on_missing_template(self, adapter):
+        with pytest.raises(ValueError, match="non-existent.html.j2"):
             await adapter.render("non-existent.html.j2", {})

@@ -1,5 +1,3 @@
-import threading
-
 from app.domain.trust.RootCertificate import RootCertificate
 
 
@@ -8,11 +6,9 @@ class TrustRootCertificateResolver:
 
     def __init__(self) -> None:
         self._cert: RootCertificate | None = None
-        self._lock = threading.Lock()
 
     def update(self, cert: RootCertificate) -> None:
-        with self._lock:
-            self._cert = cert
+        self._cert = cert
 
     def current(self) -> RootCertificate:
         cert = self._cert
