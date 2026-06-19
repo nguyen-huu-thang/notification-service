@@ -11,8 +11,7 @@ from alembic import context
 from xime.starters.sqlalchemy import Base
 
 # Import tất cả entity để chúng được đăng ký vào Base.metadata
-# OtpRecordEntity: import khi file đã được tạo
-# import app.infrastructure.persistence.entity.OtpRecordEntity  # noqa: F401
+import app.infrastructure.persistence.entity.EmailNotificationEntity     # noqa: F401
 import app.infrastructure.persistence.entity.TrustCertificateEntity     # noqa: F401
 import app.infrastructure.persistence.entity.TrustVerificationKeyEntity  # noqa: F401
 

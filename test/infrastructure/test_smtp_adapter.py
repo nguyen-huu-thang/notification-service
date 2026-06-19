@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosmtplib
 import pytest
 
-from app.common.exception.AppException import SystemError
+from app.common.exception.AppException import PrivateError, PublicError, SystemError
 from app.infrastructure.smtp.SmtpEmailAdapter import SmtpEmailAdapter
 
 
@@ -145,9 +145,38 @@ class TestSmtpAdapterSend:
             assert ei.value.error_key == "E084000"
 
     @pytest.mark.asyncio
-    async def test_auth_error_propagates_unchanged(self, adapter):
+    async def test_timeout_raises_system_error(self, adapter):
+        with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
+                   side_effect=aiosmtplib.SMTPTimeoutError("timeout")):
+            with pytest.raises(SystemError) as ei:
+                await adapter.send("user@example.com", "S", "B")
+            assert ei.value.error_key == "E084000"
+
+    @pytest.mark.asyncio
+    async def test_recipients_refused_raises_public_error(self, adapter):
+        with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
+                   side_effect=aiosmtplib.SMTPRecipientsRefused([])):
+            with pytest.raises(PublicError) as ei:
+                await adapter.send("user@example.com", "S", "B")
+            assert ei.value.error_key == "E087000"
+
+    @pytest.mark.asyncio
+    async def test_auth_error_raises_private_error(self, adapter):
         exc = aiosmtplib.SMTPAuthenticationError(535, "Auth failed")
         with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
                    side_effect=exc):
-            with pytest.raises(aiosmtplib.SMTPAuthenticationError):
+            with pytest.raises(PrivateError) as ei:
                 await adapter.send("user@example.com", "S", "B")
+            assert ei.value.error_key == "E080002"
+
+    @pytest.mark.asyncio
+    async def test_recipient_not_logged_in_plaintext(self, adapter, caplog):
+        import logging
+
+        with patch("app.infrastructure.smtp.SmtpEmailAdapter.aiosmtplib.send",
+                   new_callable=AsyncMock):
+            with caplog.at_level(logging.INFO):
+                await adapter.send("secret.user@example.com", "S", "B")
+
+        assert "secret.user@example.com" not in caplog.text
+        assert "s***@example.com" in caplog.text

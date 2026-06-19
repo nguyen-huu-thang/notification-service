@@ -15,6 +15,10 @@ message SendEmailRequest {
     string          body = 3;  // pre-rendered HTML or plain text
     TemplateContent tmpl = 4;  // render from a named template
   }
+
+  // Optional dedupe key — same key from the same caller returns the existing id
+  // instead of sending again. Khóa dedupe tùy chọn: cùng key + cùng caller trả id cũ.
+  string idempotency_key = 5;
 }
 
 message TemplateContent {
@@ -23,5 +27,5 @@ message TemplateContent {
 }
 
 message SendEmailResponse {
-  bytes notification_id = 1;  // 24-byte KSUID — for logging and traceability
+  string notification_id = 1;  // 24-byte KSUID as Base62 - for logging and traceability
 }

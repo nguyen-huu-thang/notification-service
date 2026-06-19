@@ -15,7 +15,7 @@ External Clients (gRPC + mTLS)
         ↓
  Application Layer (application/) ← use cases, port interfaces, DTOs
         ↓
-   Domain Layer (domain/)         ← pure Python dataclasses, no framework dependency
+   Domain Layer (domain/)         ← pure Python classes + value objects, no framework dependency
         ↑
 Infrastructure Layer (infrastructure/) ← SMTP, Jinja2, mTLS
 ```
@@ -42,20 +42,31 @@ app/
 ├── application/
 │   ├── usecase/                              ← orchestrate: validate → domain → infra → return
 │   │   └── email/
-│   │       └── SendEmailUseCase.py
+│   │       └── SendEmailUseCase.py           ← hybrid outbox
+│   ├── service/                              ← reusable business logic
+│   │   ├── retry/RetryPolicy.py              ← backoff + retry/dead-letter decision
+│   │   └── email/
+│   │       ├── EmailDeliveryService.py       ← send + apply outcome (shared usecase/worker)
+│   │       ├── RetrySendService.py           ← worker that re-sends due notifications
+│   │       └── NotificationCleanupService.py ← retention cleanup
 │   ├── port/
 │   │   └── outbound/                         ← Protocol interfaces (excluded from DI scan)
 │   │       └── email/
 │   │           ├── EmailSenderPort.py
-│   │           └── TemplatePort.py
-│   └── dto/                                  ← Pydantic models (excluded from DI scan)
+│   │           ├── TemplatePort.py
+│   │           ├── SaveNotificationPort.py
+│   │           ├── LoadNotificationPort.py
+│   │           └── DeleteNotificationPort.py
+│   └── dto/                                  ← Pydantic/dataclass models (excluded from DI scan)
 │       └── email/
-│           ├── SendEmailCommand.py
-│           └── SendEmailResult.py
+│           ├── SendEmailCommand.py           ← carries idempotency_key
+│           └── SendEmailResult.py            ← notification_id: Id
 │
 ├── domain/                                   ← pure Python (excluded from DI scan)
+│   ├── sharedkernel/                         ← Id (value object), IdFactory, IdService (KSUID)
 │   ├── email/
-│   │   └── EmailNotification.py              ← frozen dataclass
+│   │   ├── model/EmailNotification.py        ← plain class: invariants + behavior + retry state
+│   │   └── valueobject/EmailAddress.py       ← normalize + validate
 │   └── error/                                ← framework-neutral error objects
 │       ├── Visibility.py                     ← PRIVATE / SYSTEM / PUBLIC
 │       ├── Channel.py                        ← GRPC_INTERNAL / REST_EXTERNAL
@@ -67,26 +78,31 @@ app/
 ├── infrastructure/
 │   ├── smtp/
 │   │   └── SmtpEmailAdapter.py               ← implements EmailSenderPort
-│   └── template/
-│       ├── JinjaTemplateAdapter.py           ← implements TemplatePort
-│       └── templates/                        ← Jinja2 HTML templates
-│           ├── otp-email.html.j2
-│           ├── login-alert.html.j2
-│           ├── password-changed.html.j2
-│           └── ...
+│   ├── template/
+│   │   ├── JinjaTemplateAdapter.py           ← implements TemplatePort
+│   │   └── templates/                        ← Jinja2 HTML templates (otp-email, login-alert, ...)
+│   └── persistence/                          ← entity + mapper + repository
+│       ├── entity/EmailNotificationEntity.py
+│       ├── mapper/EmailNotificationMapper.py
+│       └── repository/email/SqlAlchemyNotificationRepository.py
+│
+├── scheduler/                                ← background jobs (DI-scanned)
+│   ├── EmailRetryJob.py                      ← every 1 min: re-send due notifications
+│   └── NotificationCleanupJob.py            ← every 24h: remove old rows
 │
 ├── config/
-│   └── dependency.py                         ← DI binding: Protocol → Implementation
+│   ├── dependency.py                         ← DI binding: Protocol → Implementation
+│   └── scheduler.py                          ← registers IntervalJobs
 │
 ├── common/
 │   ├── constants/
 │   │   ├── NotificationChannel.py            ← EMAIL, PHONE
-│   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED
+│   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED, DEAD_LETTER
 │   ├── exception/
 │   │   └── AppException.py                   ← AppException + PrivateError / SystemError / PublicError
 │   └── util/
-│       ├── IdGenerator.py                    ← KSUID 24 bytes
-│       └── Normalizer.py                     ← email normalization
+│       ├── Normalizer.py                     ← phone normalization (SMS later)
+│       └── Pii.py                            ← mask_email for PII-safe logging
 │
 └── main.py
 ```
@@ -97,25 +113,32 @@ app/
 
 ### Domain Objects are Immutable
 
-Domain objects in `domain/` are **frozen Python dataclasses** — no ORM annotations, no framework dependencies.
+Domain objects in `domain/` are **plain Python classes** — they enforce invariants in
+the constructor, expose private fields through read-only `@property`, and have no ORM
+annotations or framework dependencies. IDs are an `Id` value object, not raw `bytes`.
 
 ```python
-@dataclass(frozen=True)
 class EmailNotification:
-    notification_id: bytes
-    recipient:       str
-    subject:         str
-    body:            str
-    channel:         NotificationChannel
-    status:          NotificationStatus
-    created_at:      datetime
-    sent_at:         datetime | None = None
+    def __init__(self, notification_id: Id, recipient: EmailAddress, subject: str,
+                 body: str, channel: NotificationChannel, status: NotificationStatus,
+                 created_at: datetime, attempts: int = 0, ...) -> None:
+        if not subject:
+            raise ValueError("subject is required")
+        self._notification_id = notification_id
+        # ... assign remaining fields
+
+    @property
+    def status(self) -> NotificationStatus:
+        return self._status
 
     def mark_sent(self, now: datetime) -> 'EmailNotification':
-        return replace(self, status=NotificationStatus.SENT, sent_at=now)
+        return self._copy(status=NotificationStatus.SENT, attempts=self._attempts + 1, sent_at=now)
+
+    def schedule_retry(self, now, next_retry_at, error_code) -> 'EmailNotification': ...
+    def dead_letter(self, now, error_code) -> 'EmailNotification': ...
 ```
 
-State changes use `dataclasses.replace()` to return a new instance. No mutation.
+State changes return a new instance via a `_copy(...)` helper. No mutation.
 
 ### Port Interfaces Use Protocol
 
@@ -195,19 +218,26 @@ gRPC Request (SendEmail)
 NotificationGrpcHandler
       → maps proto message to SendEmailCommand (via NotificationGrpcMapper)
       ↓
-SendEmailUseCase.execute(command)
-      → normalize recipient email
-      → TemplatePort.render(template_name, context)   ← renders Jinja2 template
-      → EmailSenderPort.send(to, subject, body)       ← sends via SMTP
-      → return SendEmailResult(notification_id)
+SendEmailUseCase.execute(command, caller_service_id)   ← hybrid outbox
+      → validate recipient (EmailAddress) + render body (TemplatePort)
+      → if idempotency_key already exists → return existing id (no resend)
+      → persist EmailNotification(PENDING) (transaction)
+      → EmailDeliveryService.deliver(): send via SMTP
+           • success            → mark_sent(SENT)
+           • transient failure  → schedule_retry(FAILED, next_retry_at)  ← worker resends
+           • recipient refused  → dead_letter(DEAD_LETTER)
+      → persist outcome → return SendEmailResult(notification_id)
       ↓
 NotificationGrpcHandler
-      → maps SendEmailResult to proto response
+      → maps SendEmailResult to proto response (notification_id as Base62 string)
       ↓
 gRPC Response
 ```
 
-No database operations — Notification Service is stateless.
+A background worker (`EmailRetryJob`, every 1 min) scans due PENDING/FAILED notifications
+and resends them; `NotificationCleanupJob` (every 24h) removes old rows by retention.
+Notification Service **has a database** (PostgreSQL + Alembic): `email_notifications`
+(outbox) and `trust_*` (mTLS cert/key) tables.
 
 ---
 

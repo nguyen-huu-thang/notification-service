@@ -59,6 +59,7 @@ _CATALOG: tuple[ErrorDef, ...] = (
     # ── Notification — Private (080000-083999): nội bộ service ──
     _d("E080000", 80000, "Lỗi nội bộ Notification Service", 500, GrpcCode.INTERNAL, _P),
     _d("E080001", 80001, "Lỗi render template email",       500, GrpcCode.INTERNAL, _P),
+    _d("E080002", 80002, "Lỗi cấu hình gửi email (SMTP)",   500, GrpcCode.INTERNAL, _P),
 
     # ── Notification — System (084000-086999): service khác đọc qua gRPC mTLS ──
     _d("E084000", 84000, "Gửi email thất bại tạm thời, có thể thử lại", 503, GrpcCode.UNAVAILABLE, _S),
@@ -66,6 +67,7 @@ _CATALOG: tuple[ErrorDef, ...] = (
     # ── Notification — Public (087000-089999): browser/client thấy ──
     _d("E087000", 87000, "Người nhận không hợp lệ",                      400, GrpcCode.INVALID_ARGUMENT, _U),
     _d("E087001", 87001, "Thiếu nội dung gửi (template_name hoặc body)", 400, GrpcCode.INVALID_ARGUMENT, _U),
+    _d("E087002", 87002, "Không tìm thấy template email",                400, GrpcCode.INVALID_ARGUMENT, _U),
 )
 # fmt: on
 

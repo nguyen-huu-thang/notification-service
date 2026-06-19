@@ -42,6 +42,8 @@ message SendEmailRequest {
     string body          = 3;  // pre-rendered HTML or plain text
     TemplateContent tmpl = 4;  // render from a named template
   }
+
+  string idempotency_key = 5;  // optional — same key + same caller returns the existing id
 }
 
 message TemplateContent {
@@ -50,7 +52,7 @@ message TemplateContent {
 }
 
 message SendEmailResponse {
-  bytes notification_id = 1;  // 24-byte KSUID — for logging and traceability
+  string notification_id = 1;  // 24-byte KSUID as Base62 — for logging and traceability
 }
 ```
 
@@ -58,7 +60,8 @@ message SendEmailResponse {
 
 - `to` is normalized (lowercased, Unicode-normalized) before sending
 - `template_name` must match a file in `infrastructure/template/templates/`
-- `notification_id` is returned for logging and traceability — it is not used for any further operation
+- `notification_id` is returned as a Base62 string for logging and traceability — it is not used for any further operation
+- `idempotency_key` (optional): pass it to avoid duplicate sends when the caller retries; the same key from the same caller returns the existing `notification_id` instead of resending
 - For OTP emails: the caller generates the OTP code, stores its hash, and passes the raw code as a template variable (e.g., `context["otp_code"] = "123456"`)
 
 **Example — OTP email:**
@@ -100,11 +103,15 @@ SendEmailRequest {
 
 | Situation | gRPC Status |
 |---|---|
-| Request succeeds | `OK` |
-| Invalid recipient format | `INVALID_ARGUMENT` |
-| Template not found | `NOT_FOUND` |
-| SMTP delivery failed | `UNAVAILABLE` |
-| Any unexpected error | `INTERNAL` |
+| Request succeeds (including accepted-and-pending-retry) | `OK` |
+| Invalid recipient format (`E087000`) | `INVALID_ARGUMENT` |
+| Missing content: neither body nor template (`E087001`) | `INVALID_ARGUMENT` |
+| Template not found (`E087002`) | `INVALID_ARGUMENT` |
+| Internal error (DB, unexpected) | `INTERNAL` |
+
+> **Transient** SMTP failures are no longer returned to the caller: the email is accepted
+> into the outbox and a worker retries it. The caller only receives errors for the
+> validation cases above.
 
 ---
 
@@ -120,9 +127,14 @@ All connections must use mTLS. The caller presents its service certificate (issu
 3. App layer:   cert.service_id == request metadata service_id
 ```
 
-### Fire and Forget
+### Durable Delivery (outbox)
 
-Notification Service is a fire-and-forget delivery service. Call `SendEmail` once per user action. If `SendEmail` returns `UNAVAILABLE` (SMTP failure), Notification Service has not stored any retry intent — the caller decides whether to retry.
+Notification Service persists every email, then sends it (hybrid outbox model). On a
+transient failure (SMTP down) the email is **not lost**: it stays `FAILED`/`PENDING` and a
+worker retries it with exponential backoff, dead-lettering when exhausted. So the caller
+**does not need to retry** on transient errors. Client errors (bad recipient/template) are
+still returned immediately so the caller can fix them. To stay safe when a caller must
+retry, pass an `idempotency_key`.
 
 ### Summary Table
 
@@ -130,5 +142,5 @@ Notification Service is a fire-and-forget delivery service. Call `SendEmail` onc
 |---|---|
 | Send login OTP to user | Yes — `SendEmail` with `otp-email` template |
 | Send order confirmation | Yes — `SendEmail` with `order-confirmation` template |
-| Checking if a previous email was delivered | No — Notification Service does not expose delivery status |
-| Sending the same email multiple times | No — call once; retry only on transport failure |
+| Avoid duplicates on retry | Yes — pass `idempotency_key`; same key + same caller returns the existing id |
+| Retry yourself on transient SMTP error | Not needed — the outbox worker resends automatically |

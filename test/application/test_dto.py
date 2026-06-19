@@ -2,7 +2,8 @@ import pytest
 
 from app.application.dto.email.SendEmailCommand import SendEmailCommand
 from app.application.dto.email.SendEmailResult import SendEmailResult
-from app.common.util.IdGenerator import generate_id
+from app.domain.sharedkernel.factory.IdFactory import IdFactory
+from app.domain.sharedkernel.model.Id import Id
 
 
 class TestSendEmailCommand:
@@ -54,8 +55,8 @@ class TestSendEmailCommand:
 
 
 class TestSendEmailResult:
-    def test_notification_id_bytes(self):
-        nid = generate_id()
+    def test_notification_id_is_id(self):
+        nid = IdFactory.generate()
         result = SendEmailResult(notification_id=nid)
         assert result.notification_id == nid
-        assert isinstance(result.notification_id, bytes)
+        assert isinstance(result.notification_id, Id)

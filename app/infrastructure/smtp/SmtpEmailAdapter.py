@@ -5,7 +5,8 @@ import aiosmtplib
 
 from xime.core.config.runtime import RuntimeConfig
 
-from app.common.exception.AppException import SystemError
+from app.common.exception.AppException import PrivateError, PublicError, SystemError
+from app.common.util.Pii import mask_email
 
 _log = logging.getLogger(__name__)
 
@@ -40,8 +41,31 @@ class SmtpEmailAdapter:
                 password=self._password or None,
                 use_tls=self._use_tls,
             )
-        except (aiosmtplib.SMTPConnectError, aiosmtplib.SMTPServerDisconnected) as e:
-            # Transient SMTP failure — caller may retry (SYSTEM, UNAVAILABLE).
-            # Lỗi SMTP tạm thời — caller có thể thử lại (SYSTEM, UNAVAILABLE).
+        except aiosmtplib.SMTPRecipientsRefused as e:
+            # Server rejected the recipient address — client error (PUBLIC).
+            # Máy chủ từ chối địa chỉ người nhận — lỗi từ phía client (PUBLIC).
+            raise PublicError("E087000") from e
+        except (
+            aiosmtplib.SMTPSenderRefused,
+            aiosmtplib.SMTPAuthenticationError,
+            aiosmtplib.SMTPNotSupported,
+            aiosmtplib.SMTPHeloError,
+        ) as e:
+            # Our own SMTP configuration is wrong — internal only (PRIVATE).
+            # Cấu hình SMTP của chính service sai — chỉ nội bộ (PRIVATE).
+            raise PrivateError("E080002") from e
+        except (
+            aiosmtplib.SMTPConnectError,
+            aiosmtplib.SMTPServerDisconnected,
+            aiosmtplib.SMTPTimeoutError,
+            ConnectionError,
+            TimeoutError,
+        ) as e:
+            # Transient delivery failure — caller may retry (SYSTEM, UNAVAILABLE).
+            # Lỗi gửi tạm thời — caller có thể thử lại (SYSTEM, UNAVAILABLE).
             raise SystemError("E084000") from e
-        _log.info("Email sent to=%s subject=%r", to, subject)
+        except aiosmtplib.SMTPException as e:
+            # Any other SMTP-level error — treat as transient and retryable.
+            # Lỗi SMTP khác — coi là tạm thời, có thể thử lại.
+            raise SystemError("E084000") from e
+        _log.info("Email sent to=%s subject=%r", mask_email(to), subject)

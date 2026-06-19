@@ -1,3 +1,4 @@
+from app.api.grpc.external.PeerIdentity import extract_caller_service_id
 from app.api.grpc.generated.notification_pb2_grpc import NotificationServiceServicer
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.usecase.email.SendEmailUseCase import SendEmailUseCase
@@ -20,5 +21,6 @@ class NotificationGrpcHandler(NotificationServiceServicer):
 
     async def SendEmail(self, request, context):
         command = self._mapper.to_send_email_command(request)
-        result = await self._send_email.execute(command)
+        caller_service_id = extract_caller_service_id(context)
+        result = await self._send_email.execute(command, caller_service_id)
         return self._mapper.to_send_email_response(result)

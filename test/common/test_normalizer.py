@@ -1,27 +1,8 @@
-import pytest
+from app.common.util.Normalizer import normalize_phone
 
-from app.common.util.Normalizer import normalize_email, normalize_phone
-
-
-class TestNormalizeEmail:
-    def test_strips_whitespace(self):
-        assert normalize_email("  user@example.com  ") == "user@example.com"
-
-    def test_lowercases(self):
-        assert normalize_email("User@Example.COM") == "user@example.com"
-
-    def test_strips_and_lowercases(self):
-        assert normalize_email("  Test@Example.COM  ") == "test@example.com"
-
-    def test_nfkc_normalization(self):
-        # Fullwidth characters → ASCII
-        assert normalize_email("ｕｓｅｒ＠ｅｘａｍｐｌｅ．ｃｏｍ") == "user@example.com"
-
-    def test_already_normalized_unchanged(self):
-        assert normalize_email("user@example.com") == "user@example.com"
-
-    def test_empty_string(self):
-        assert normalize_email("") == ""
+# Email normalization moved to the EmailAddress value object — see
+# test/domain/test_email_address.py.
+# Chuẩn hóa email đã chuyển sang value object EmailAddress.
 
 
 class TestNormalizePhone:

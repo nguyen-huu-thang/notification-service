@@ -13,9 +13,10 @@ from app.api.grpc.external.NotificationGrpcHandler import NotificationGrpcHandle
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.dto.email.SendEmailResult import SendEmailResult
 from app.common.exception.AppException import PublicError, SystemError
-from app.common.util.IdGenerator import generate_id
+from app.domain.sharedkernel.factory.IdFactory import IdFactory
+from app.domain.sharedkernel.service.IdService import IdService
 
-_NOTIF_ID = generate_id()
+_NOTIF_ID = IdFactory.generate()
 
 
 class _FakeContext:
@@ -47,7 +48,38 @@ class TestSendEmail:
             ),
         )
         resp = await handler.SendEmail(req, context=_FakeContext())
-        assert resp.notification_id == _NOTIF_ID
+        assert resp.notification_id == IdService.to_string(_NOTIF_ID)
+
+    @pytest.mark.asyncio
+    async def test_caller_service_id_extracted_and_passed(self):
+        send_email_uc = AsyncMock()
+        send_email_uc.execute = AsyncMock(return_value=SendEmailResult(notification_id=_NOTIF_ID))
+        handler = NotificationGrpcHandler(
+            send_email_use_case=send_email_uc,
+            mapper=NotificationGrpcMapper(),
+        )
+
+        class _MtlsContext:
+            def auth_context(self):
+                return {"x509_common_name": [b"identity-service"]}
+
+        req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S", body="x")
+        await handler.SendEmail(req, context=_MtlsContext())
+
+        # caller_service_id (đối số thứ 2) lấy từ CN của client cert.
+        assert send_email_uc.execute.call_args[0][1] == "identity-service"
+
+    @pytest.mark.asyncio
+    async def test_no_mtls_passes_none_caller(self):
+        send_email_uc = AsyncMock()
+        send_email_uc.execute = AsyncMock(return_value=SendEmailResult(notification_id=_NOTIF_ID))
+        handler = NotificationGrpcHandler(
+            send_email_use_case=send_email_uc,
+            mapper=NotificationGrpcMapper(),
+        )
+        req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S", body="x")
+        await handler.SendEmail(req, context=_FakeContext())
+        assert send_email_uc.execute.call_args[0][1] is None
 
     @pytest.mark.asyncio
     async def test_usecase_called_with_mapped_command(self):

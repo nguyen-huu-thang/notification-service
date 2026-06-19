@@ -33,6 +33,12 @@ Application Services (social, ecommerce, SaaS, AI)
 - Render HTML email templates via Jinja2
 - Normalize recipient address before delivery
 
+**Durable Delivery (outbox)**
+- Persist every email (`email_notifications` table) for retry, audit, and idempotency
+- Automatic retry with exponential backoff on transient failures; dead-letter when exhausted
+- Optional caller-supplied `idempotency_key` to avoid duplicate sends
+- Background workers: retry due notifications and clean up old rows by retention
+
 ## What Notification Service Does NOT Do
 
 - Does not generate OTP codes — OTP lifecycle belongs to the calling service
@@ -41,7 +47,6 @@ Application Services (social, ecommerce, SaaS, AI)
 - Does not manage user notification preferences
 - Does not authenticate end users
 - Does not originate communication — it only delivers on request
-- Does not retry failed sends (caller decides retry strategy)
 
 ---
 
@@ -67,7 +72,11 @@ All callers must present a valid mTLS certificate issued by Trust Service. Notif
 
 ### Immutable Domain Model
 
-Domain objects (`EmailNotification`) are frozen Python dataclasses. State changes return new instances instead of mutating in place.
+Domain objects (`EmailNotification`) are plain Python classes that enforce their
+invariants in the constructor and expose state through read-only properties. They
+are immutable: state changes (`mark_sent`, `schedule_retry`, `dead_letter`) return
+new instances instead of mutating in place. IDs are an `Id` value object (KSUID, 24
+bytes), not raw `bytes`.
 
 ---
 
@@ -94,15 +103,17 @@ Notification Service follows **Hexagonal Architecture** (Ports and Adapters) wit
 
 ```
 app/
-├── api/          ← Input adapters (gRPC handlers, mappers)
-├── application/  ← Use cases, port interfaces, DTOs
-├── domain/       ← Pure Python dataclasses (frozen=True)
-├── infrastructure/ ← SMTP adapter, Jinja2 template engine
-├── config/       ← DI binding configuration
+├── api/          ← Input adapters (gRPC handlers, mappers, PeerIdentity)
+├── application/  ← Use cases, services (retry/delivery/cleanup), ports, DTOs
+├── domain/       ← Pure Python classes + value objects (Id, EmailAddress)
+├── infrastructure/ ← SMTP adapter, Jinja2 engine, persistence (entity/mapper/repository)
+├── scheduler/    ← Background jobs (email retry, retention cleanup)
+├── integration/  ← Trust Service mTLS bootstrap + cert/key sync
+├── config/       ← DI binding, gRPC, scheduler configuration
 └── common/       ← Constants, exceptions, utilities
 ```
 
-Domain layer has no dependency on infrastructure, framework, or database. All dependencies point inward.
+Domain layer has no dependency on infrastructure, framework, or database. All dependencies point inward. Persistence uses PostgreSQL + Alembic (tables: `trust_*`, `email_notifications`).
 
 ---
 
@@ -133,7 +144,10 @@ Domain layer has no dependency on infrastructure, framework, or database. All de
 
 ## Project Status
 
-Notification Service is in **active development**. Domain model and common layer are complete. Use case, infrastructure, and gRPC API implementation are in progress.
+Notification Service is in **active development**. Email delivery (templates + SMTP),
+the durable outbox (persistence, retry with backoff, dead-letter, idempotency, retention
+cleanup), gRPC API, and Trust mTLS integration are implemented and covered by tests.
+SMS and observability (structured logging, metrics) are planned next.
 
 ---
 

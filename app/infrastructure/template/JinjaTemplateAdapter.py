@@ -1,9 +1,17 @@
 import logging
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    TemplateError,
+    TemplateNotFound,
+    select_autoescape,
+)
 
 from xime.core.config.runtime import RuntimeConfig
+
+from app.common.exception.AppException import PrivateError, PublicError
 
 _log = logging.getLogger(__name__)
 
@@ -31,6 +39,15 @@ class JinjaTemplateAdapter:
     async def render(self, template_name: str, context: dict) -> str:
         try:
             template = self._env.get_template(template_name)
-        except TemplateNotFound:
-            raise ValueError(f"Template not found: {template_name!r}")
-        return template.render(**context)
+        except TemplateNotFound as e:
+            # Caller asked for a template that does not exist — client error.
+            # Caller yêu cầu template không tồn tại — lỗi từ phía client.
+            raise PublicError("E087002") from e
+
+        try:
+            return template.render(**context)
+        except TemplateError as e:
+            # Rendering failed (bad template, undefined var) — our internal problem.
+            # Render lỗi (template sai, biến thiếu) — lỗi nội bộ của service.
+            _log.warning("Template render failed: template=%s err=%s", template_name, e)
+            raise PrivateError("E080001") from e

@@ -15,7 +15,7 @@ External Clients (gRPC + mTLS)
         ↓
  Application Layer (application/) ← use case, port interface, DTO
         ↓
-   Domain Layer (domain/)         ← pure Python dataclass, không phụ thuộc framework
+   Domain Layer (domain/)         ← pure Python class + value object, không phụ thuộc framework
         ↑
 Infrastructure Layer (infrastructure/) ← SMTP, Jinja2, mTLS
 ```
@@ -42,20 +42,31 @@ app/
 ├── application/
 │   ├── usecase/                              ← orchestrate: validate → domain → infra → return
 │   │   └── email/
-│   │       └── SendEmailUseCase.py
+│   │       └── SendEmailUseCase.py           ← hybrid outbox
+│   ├── service/                              ← logic nghiệp vụ tái sử dụng
+│   │   ├── retry/RetryPolicy.py              ← backoff + quyết định retry/dead-letter
+│   │   └── email/
+│   │       ├── EmailDeliveryService.py       ← gửi + áp dụng kết quả (dùng chung usecase/worker)
+│   │       ├── RetrySendService.py           ← worker gửi lại notification đến hạn
+│   │       └── NotificationCleanupService.py ← dọn dữ liệu cũ theo retention
 │   ├── port/
 │   │   └── outbound/                         ← Protocol interface (excluded khỏi DI scan)
 │   │       └── email/
 │   │           ├── EmailSenderPort.py
-│   │           └── TemplatePort.py
-│   └── dto/                                  ← Pydantic model (excluded khỏi DI scan)
+│   │           ├── TemplatePort.py
+│   │           ├── SaveNotificationPort.py
+│   │           ├── LoadNotificationPort.py
+│   │           └── DeleteNotificationPort.py
+│   └── dto/                                  ← Pydantic/dataclass model (excluded khỏi DI scan)
 │       └── email/
-│           ├── SendEmailCommand.py
-│           └── SendEmailResult.py
+│           ├── SendEmailCommand.py           ← có idempotency_key
+│           └── SendEmailResult.py            ← notification_id: Id
 │
 ├── domain/                                   ← pure Python (excluded khỏi DI scan)
+│   ├── sharedkernel/                         ← Id (value object), IdFactory, IdService (KSUID)
 │   ├── email/
-│   │   └── EmailNotification.py              ← frozen dataclass
+│   │   ├── model/EmailNotification.py        ← class thường: invariant + behavior + retry state
+│   │   └── valueobject/EmailAddress.py       ← normalize + validate
 │   └── error/                                ← object thuần error (framework-neutral)
 │       ├── Visibility.py                     ← PRIVATE / SYSTEM / PUBLIC
 │       ├── Channel.py                        ← GRPC_INTERNAL / REST_EXTERNAL
@@ -67,26 +78,31 @@ app/
 ├── infrastructure/
 │   ├── smtp/
 │   │   └── SmtpEmailAdapter.py               ← implements EmailSenderPort
-│   └── template/
-│       ├── JinjaTemplateAdapter.py           ← implements TemplatePort
-│       └── templates/                        ← Jinja2 HTML template
-│           ├── otp-email.html.j2
-│           ├── login-alert.html.j2
-│           ├── password-changed.html.j2
-│           └── ...
+│   ├── template/
+│   │   ├── JinjaTemplateAdapter.py           ← implements TemplatePort
+│   │   └── templates/                        ← Jinja2 HTML template (otp-email, login-alert, ...)
+│   └── persistence/                          ← entity + mapper + repository
+│       ├── entity/EmailNotificationEntity.py
+│       ├── mapper/EmailNotificationMapper.py
+│       └── repository/email/SqlAlchemyNotificationRepository.py
+│
+├── scheduler/                                ← job nền (DI scan)
+│   ├── EmailRetryJob.py                      ← mỗi 1 phút: gửi lại notification đến hạn
+│   └── NotificationCleanupJob.py            ← mỗi 24h: dọn dữ liệu cũ
 │
 ├── config/
-│   └── dependency.py                         ← DI binding: Protocol → Implementation
+│   ├── dependency.py                         ← DI binding: Protocol → Implementation
+│   └── scheduler.py                          ← đăng ký IntervalJob
 │
 ├── common/
 │   ├── constants/
 │   │   ├── NotificationChannel.py            ← EMAIL, PHONE
-│   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED
+│   │   └── NotificationStatus.py            ← PENDING, SENT, FAILED, DEAD_LETTER
 │   ├── exception/
 │   │   └── AppException.py                   ← AppException + PrivateError / SystemError / PublicError
 │   └── util/
-│       ├── IdGenerator.py                    ← KSUID 24 bytes
-│       └── Normalizer.py                     ← chuẩn hóa email
+│       ├── Normalizer.py                     ← chuẩn hóa số điện thoại (SMS sau)
+│       └── Pii.py                            ← mask_email cho log an toàn PII
 │
 └── main.py
 ```
@@ -97,25 +113,32 @@ app/
 
 ### Domain Object là Immutable
 
-Domain object trong `domain/` là **frozen Python dataclass** — không có ORM annotation, không phụ thuộc framework.
+Domain object trong `domain/` là **class Python thường** — kiểm tra invariant trong
+constructor, field private expose qua `@property` chỉ-đọc, không có ORM annotation,
+không phụ thuộc framework. ID dùng value object `Id`, không dùng `bytes` thuần.
 
 ```python
-@dataclass(frozen=True)
 class EmailNotification:
-    notification_id: bytes
-    recipient:       str
-    subject:         str
-    body:            str
-    channel:         NotificationChannel
-    status:          NotificationStatus
-    created_at:      datetime
-    sent_at:         datetime | None = None
+    def __init__(self, notification_id: Id, recipient: EmailAddress, subject: str,
+                 body: str, channel: NotificationChannel, status: NotificationStatus,
+                 created_at: datetime, attempts: int = 0, ...) -> None:
+        if not subject:
+            raise ValueError("subject is required")
+        self._notification_id = notification_id
+        # ... gán field còn lại
+
+    @property
+    def status(self) -> NotificationStatus:
+        return self._status
 
     def mark_sent(self, now: datetime) -> 'EmailNotification':
-        return replace(self, status=NotificationStatus.SENT, sent_at=now)
+        return self._copy(status=NotificationStatus.SENT, attempts=self._attempts + 1, sent_at=now)
+
+    def schedule_retry(self, now, next_retry_at, error_code) -> 'EmailNotification': ...
+    def dead_letter(self, now, error_code) -> 'EmailNotification': ...
 ```
 
-Thay đổi trạng thái dùng `dataclasses.replace()` để trả về instance mới. Không mutate.
+Thay đổi trạng thái trả về instance mới qua helper `_copy(...)`. Không mutate.
 
 ### Port Interface dùng Protocol
 
@@ -195,19 +218,26 @@ gRPC Request (SendEmail)
 NotificationGrpcHandler
       → map proto message sang SendEmailCommand (qua NotificationGrpcMapper)
       ↓
-SendEmailUseCase.execute(command)
-      → chuẩn hóa email người nhận
-      → TemplatePort.render(template_name, context)   ← render Jinja2 template
-      → EmailSenderPort.send(to, subject, body)       ← gửi qua SMTP
-      → trả về SendEmailResult(notification_id)
+SendEmailUseCase.execute(command, caller_service_id)   ← hybrid outbox
+      → validate recipient (EmailAddress) + render body (TemplatePort)
+      → nếu có idempotency_key đã tồn tại → trả id cũ (không gửi lại)
+      → lưu EmailNotification(PENDING) vào DB (transaction)
+      → EmailDeliveryService.deliver(): gửi qua SMTP
+           • thành công        → mark_sent(SENT)
+           • lỗi tạm thời       → schedule_retry(FAILED, next_retry_at)  ← worker gửi lại
+           • recipient bị từ chối → dead_letter(DEAD_LETTER)
+      → lưu kết quả vào DB → trả SendEmailResult(notification_id)
       ↓
 NotificationGrpcHandler
-      → map SendEmailResult sang proto response
+      → map SendEmailResult sang proto response (notification_id dạng Base62 string)
       ↓
 gRPC Response
 ```
 
-Không có thao tác database — Notification Service là stateless.
+Worker nền (`EmailRetryJob`, mỗi 1 phút) quét các notification PENDING/FAILED đến
+hạn và gửi lại; `NotificationCleanupJob` (mỗi 24h) dọn dữ liệu cũ theo retention.
+Notification Service **có database** (PostgreSQL + Alembic): bảng `email_notifications`
+(outbox) và `trust_*` (cert/key mTLS).
 
 ---
 

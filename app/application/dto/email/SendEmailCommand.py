@@ -9,6 +9,7 @@ class SendEmailCommand(BaseModel):
     template_name: str | None = None
     template_data: dict[str, str] = {}
     body: str | None = None
+    idempotency_key: str | None = None
 
     @field_validator("template_data")
     @classmethod

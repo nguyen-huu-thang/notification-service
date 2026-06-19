@@ -4,8 +4,12 @@ from xime.starters.sqlalchemy import SqlAlchemyTransactionManager
 
 from app.application.port.outbound.email.EmailSenderPort import EmailSenderPort
 from app.application.port.outbound.email.TemplatePort import TemplatePort
+from app.application.port.outbound.email.SaveNotificationPort import SaveNotificationPort
+from app.application.port.outbound.email.LoadNotificationPort import LoadNotificationPort
+from app.application.port.outbound.email.DeleteNotificationPort import DeleteNotificationPort
 from app.infrastructure.smtp.SmtpEmailAdapter import SmtpEmailAdapter
 from app.infrastructure.template.JinjaTemplateAdapter import JinjaTemplateAdapter
+from app.infrastructure.persistence.repository.email.SqlAlchemyNotificationRepository import SqlAlchemyNotificationRepository
 
 # Trust ports
 from app.application.port.outbound.trust.LoadCertificatePort import LoadCertificatePort
@@ -40,11 +44,17 @@ dependency.scan(
     "xime.starters.sqlalchemy",
     # Application — use cases
     "app.application.usecase.email",
+    # Application — services (retry policy, delivery, retry worker, cleanup)
+    "app.application.service.retry",
+    "app.application.service.email",
     # Infrastructure — email
     "app.infrastructure.smtp",
     "app.infrastructure.template",
-    # Infrastructure — Trust repositories
+    # Infrastructure — repositories
+    "app.infrastructure.persistence.repository.email",
     "app.infrastructure.persistence.repository.trust",
+    # Scheduler jobs (email outbox retry + cleanup)
+    "app.scheduler",
     # Integration — Trust Service (all sub-packages)
     "app.integration.trust.publicca",
     "app.integration.trust.certificate",
@@ -65,6 +75,10 @@ dependency.bind({
     # Email
     EmailSenderPort:            SmtpEmailAdapter,
     TemplatePort:               JinjaTemplateAdapter,
+    # Email outbox repository
+    SaveNotificationPort:       SqlAlchemyNotificationRepository,
+    LoadNotificationPort:       SqlAlchemyNotificationRepository,
+    DeleteNotificationPort:     SqlAlchemyNotificationRepository,
     # Trust ports → Trust repositories
     LoadCertificatePort:        TrustCertificateRepository,
     SaveCertificatePort:        TrustCertificateRepository,

@@ -125,8 +125,8 @@ Application services do not know about SMTP or Jinja2 internals — they call gR
 | Does it manage OTP codes? | No — OTP lifecycle is the caller's responsibility |
 | Does it know what a notification means? | No — that is the caller's concern |
 | Does it authenticate end users? | No — it trusts the calling service via mTLS |
-| What if SMTP goes down? | Notification Service returns an error; the caller decides whether to retry |
-| Is it stateful? | No — no database required |
+| What if SMTP goes down? | The email is persisted (PENDING/FAILED); a worker retries it with backoff, dead-lettering when exhausted |
+| Is it stateful? | Yes — PostgreSQL stores the email outbox + mTLS cert/key |
 
 ---
 
@@ -134,6 +134,6 @@ Application services do not know about SMTP or Jinja2 internals — they call gR
 
 - Not a business service — it has no knowledge of order flows, auth flows, or user journeys
 - Not an OTP manager — it does not generate, store, or verify OTP codes
-- Not a message broker — it does not queue or retry sends internally
+- Not a message broker — it takes no async events (callers invoke it directly over gRPC); it does have an internal outbox + retry, but is not a full queueing system
 - Not a notification preferences manager — it does not decide who wants what
 - Not a user-facing service — end users never interact with it directly

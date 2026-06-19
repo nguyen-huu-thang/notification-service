@@ -42,6 +42,8 @@ message SendEmailRequest {
     string body          = 3;  // HTML hoặc plain text đã render sẵn
     TemplateContent tmpl = 4;  // render từ template có tên
   }
+
+  string idempotency_key = 5;  // tùy chọn — cùng key + cùng caller trả id cũ, không gửi lại
 }
 
 message TemplateContent {
@@ -50,7 +52,7 @@ message TemplateContent {
 }
 
 message SendEmailResponse {
-  bytes notification_id = 1;  // KSUID 24 bytes — dùng cho logging và traceability
+  string notification_id = 1;  // KSUID 24 byte mã hóa Base62 — dùng cho logging và traceability
 }
 ```
 
@@ -58,7 +60,8 @@ message SendEmailResponse {
 
 - `to` được chuẩn hóa (lowercase, Unicode normalize) trước khi gửi
 - `template_name` phải khớp với file trong `infrastructure/template/templates/`
-- `notification_id` trả về để logging và truy vết — không dùng cho thao tác nào khác
+- `notification_id` trả về dạng Base62 string để logging và truy vết — không dùng cho thao tác nào khác
+- `idempotency_key` (tùy chọn): truyền để tránh gửi trùng khi caller retry; cùng key + cùng caller sẽ trả lại `notification_id` cũ thay vì gửi lại
 - Với email OTP: caller tự tạo mã OTP, lưu hash, và truyền mã thô vào template variable (ví dụ: `context["otp_code"] = "123456"`)
 
 **Ví dụ — email OTP:**
@@ -100,11 +103,14 @@ SendEmailRequest {
 
 | Tình huống | gRPC Status |
 |---|---|
-| Request thành công | `OK` |
-| Định dạng email không hợp lệ | `INVALID_ARGUMENT` |
-| Template không tìm thấy | `NOT_FOUND` |
-| SMTP gửi thất bại | `UNAVAILABLE` |
-| Lỗi không mong đợi | `INTERNAL` |
+| Request thành công (kể cả khi đã nhận và đang chờ retry) | `OK` |
+| Định dạng email không hợp lệ (`E087000`) | `INVALID_ARGUMENT` |
+| Thiếu nội dung: không có body lẫn template (`E087001`) | `INVALID_ARGUMENT` |
+| Template không tìm thấy (`E087002`) | `INVALID_ARGUMENT` |
+| Lỗi nội bộ (DB, không mong đợi) | `INTERNAL` |
+
+> Lỗi SMTP **tạm thời** không còn trả về caller: email đã được nhận vào outbox và worker
+> tự gửi lại. Caller chỉ nhận lỗi cho các trường hợp validate phía trên.
 
 ---
 
@@ -120,9 +126,13 @@ Tất cả kết nối phải dùng mTLS. Caller trình certificate service (do 
 3. App layer:   cert.service_id == service_id trong request metadata
 ```
 
-### Fire and Forget
+### Gửi bền vững (outbox)
 
-Notification Service là delivery service theo kiểu fire-and-forget. Gọi `SendEmail` một lần cho mỗi hành động của user. Nếu `SendEmail` trả về `UNAVAILABLE` (SMTP fail), Notification Service không lưu lại ý định retry — caller tự quyết định có retry không.
+Notification Service lưu mọi email vào DB rồi gửi (mô hình hybrid outbox). Khi gặp lỗi
+tạm thời (SMTP down), email **không bị mất**: được giữ ở trạng thái `FAILED`/`PENDING` và
+worker tự gửi lại với exponential backoff, hết số lần thì chuyển `DEAD_LETTER`. Vì vậy
+caller **không cần tự retry** khi lỗi tạm thời. Lỗi client (recipient/template sai) vẫn
+trả về ngay để caller sửa. Để an toàn khi caller buộc phải retry, truyền `idempotency_key`.
 
 ### Tóm tắt
 
@@ -130,5 +140,5 @@ Notification Service là delivery service theo kiểu fire-and-forget. Gọi `Se
 |---|---|
 | Gửi OTP đăng nhập cho user | Có — `SendEmail` với template `otp-email` |
 | Gửi xác nhận đơn hàng | Có — `SendEmail` với template `order-confirmation` |
-| Kiểm tra email trước đã gửi chưa | Không — Notification Service không lưu trạng thái gửi |
-| Gửi cùng một email nhiều lần | Không — chỉ gọi một lần; retry chỉ khi gặp lỗi transport |
+| Tránh gửi trùng khi retry | Có — truyền `idempotency_key`; cùng key + cùng caller trả id cũ |
+| Tự retry khi SMTP lỗi tạm thời | Không cần — outbox + worker tự gửi lại |

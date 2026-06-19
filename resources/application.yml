@@ -34,6 +34,16 @@ smtp:
   use_tls: false
   sender: "noreply@xime.local"
 
+# Outbox email: retry khi gửi thất bại tạm thời + dọn dữ liệu cũ.
+notification:
+  retry:
+    max_attempts: 5                          # tổng số lần gửi (1 lần đầu + retry)
+    backoff_seconds: [60, 300, 1800, 7200, 21600]  # 1m, 5m, 30m, 2h, 6h
+    batch_size: 50                           # số notification worker xử lý mỗi lượt
+  retention:
+    sent_days: 30                            # xóa SENT cũ hơn (ngày)
+    dead_letter_days: 90                     # xóa DEAD_LETTER cũ hơn (ngày)
+
 template:
   dir: "app/infrastructure/template/templates"
 

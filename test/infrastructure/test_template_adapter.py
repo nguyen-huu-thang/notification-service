@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from app.common.exception.AppException import PublicError
 from app.infrastructure.template.JinjaTemplateAdapter import JinjaTemplateAdapter
 
 _TEMPLATES_DIR = (
@@ -116,6 +117,8 @@ class TestPasswordChangedTemplate:
 
 class TestMissingTemplate:
     @pytest.mark.asyncio
-    async def test_raises_value_error_on_missing_template(self, adapter):
-        with pytest.raises(ValueError, match="non-existent.html.j2"):
+    async def test_raises_public_error_on_missing_template(self, adapter):
+        # Template không tồn tại = lỗi client → PublicError E087002.
+        with pytest.raises(PublicError) as ei:
             await adapter.render("non-existent.html.j2", {})
+        assert ei.value.error_key == "E087002"
