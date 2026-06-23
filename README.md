@@ -103,7 +103,7 @@ Notification Service follows **Hexagonal Architecture** (Ports and Adapters) wit
 
 ```
 app/
-├── api/          ← Input adapters (gRPC handlers, mappers, PeerIdentity)
+├── api/          ← Input adapters (gRPC handlers, mappers, interceptors)
 ├── application/  ← Use cases, services (retry/delivery/cleanup), ports, DTOs
 ├── domain/       ← Pure Python classes + value objects (Id, EmailAddress)
 ├── infrastructure/ ← SMTP adapter, Jinja2 engine, persistence (entity/mapper/repository)
@@ -146,8 +146,8 @@ Domain layer has no dependency on infrastructure, framework, or database. All de
 
 Notification Service is in **active development**. Email delivery (templates + SMTP),
 the durable outbox (persistence, retry with backoff, dead-letter, idempotency, retention
-cleanup), gRPC API, and Trust mTLS integration are implemented and covered by tests.
-SMS and observability (structured logging, metrics) are planned next.
+cleanup), gRPC API, Trust mTLS integration, and observability (structured JSON logging +
+Prometheus metrics) are implemented and covered by tests. SMS is planned next.
 
 ---
 

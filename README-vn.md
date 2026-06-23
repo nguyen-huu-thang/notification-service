@@ -102,7 +102,7 @@ Notification Service theo **Hexagonal Architecture** (Ports and Adapters) với 
 
 ```
 app/
-├── api/          ← Input adapter (gRPC handler, mapper, PeerIdentity)
+├── api/          ← Input adapter (gRPC handler, mapper, interceptor)
 ├── application/  ← Use case, service (retry/delivery/cleanup), port, DTO
 ├── domain/       ← Class Python thuần + value object (Id, EmailAddress)
 ├── infrastructure/ ← SMTP adapter, Jinja2 engine, persistence (entity/mapper/repository)
@@ -145,8 +145,8 @@ Domain layer không phụ thuộc vào infrastructure, framework hay database. M
 
 Notification Service đang trong **giai đoạn phát triển tích cực**. Gửi email (template +
 SMTP), outbox bền vững (lưu DB, retry với backoff, dead-letter, idempotency, dọn dữ liệu
-theo retention), gRPC API và tích hợp mTLS với Trust đã hiện thực và có test bao phủ. SMS
-và observability (structured logging, metrics) là việc tiếp theo.
+theo retention), gRPC API, tích hợp mTLS với Trust và observability (structured JSON
+logging + Prometheus metrics) đã hiện thực và có test bao phủ. SMS là việc tiếp theo.
 
 ---
 

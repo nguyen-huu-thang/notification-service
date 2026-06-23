@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from xime.core.context import request_context
+from xime.core.security.peer import PEER_CN
+
 from app.api.grpc.generated import notification_pb2
 from app.api.grpc.external.NotificationGrpcHandler import NotificationGrpcHandler
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
@@ -51,7 +54,7 @@ class TestSendEmail:
         assert resp.notification_id == IdService.to_string(_NOTIF_ID)
 
     @pytest.mark.asyncio
-    async def test_caller_service_id_extracted_and_passed(self):
+    async def test_caller_service_id_read_from_request_context(self):
         send_email_uc = AsyncMock()
         send_email_uc.execute = AsyncMock(return_value=SendEmailResult(notification_id=_NOTIF_ID))
         handler = NotificationGrpcHandler(
@@ -59,14 +62,18 @@ class TestSendEmail:
             mapper=NotificationGrpcMapper(),
         )
 
-        class _MtlsContext:
-            def auth_context(self):
-                return {"x509_common_name": [b"identity-service"]}
+        # Framework's RequestContextInterceptor sets PEER_CN from the mTLS client
+        # cert; the handler reads it via current_caller().
+        # RequestContextInterceptor của framework đặt PEER_CN từ client cert mTLS;
+        # handler đọc qua current_caller().
+        request_context.set(PEER_CN, "identity-service")
+        try:
+            req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S", body="x")
+            await handler.SendEmail(req, context=_FakeContext())
+        finally:
+            request_context.clear()
 
-        req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S", body="x")
-        await handler.SendEmail(req, context=_MtlsContext())
-
-        # caller_service_id (đối số thứ 2) lấy từ CN của client cert.
+        # caller_service_id (đối số thứ 2) lấy từ peer CN trong request_context.
         assert send_email_uc.execute.call_args[0][1] == "identity-service"
 
     @pytest.mark.asyncio
@@ -77,6 +84,9 @@ class TestSendEmail:
             send_email_use_case=send_email_uc,
             mapper=NotificationGrpcMapper(),
         )
+        # No peer identity in request_context → caller is None.
+        # Không có peer identity trong request_context → caller là None.
+        request_context.clear()
         req = notification_pb2.SendEmailRequest(to="u@e.com", subject="S", body="x")
         await handler.SendEmail(req, context=_FakeContext())
         assert send_email_uc.execute.call_args[0][1] is None

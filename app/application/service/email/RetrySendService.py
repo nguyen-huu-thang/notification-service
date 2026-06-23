@@ -9,6 +9,7 @@ from xime.core.transaction.manager import TransactionManager
 from app.application.port.outbound.email.LoadNotificationPort import LoadNotificationPort
 from app.application.port.outbound.email.SaveNotificationPort import SaveNotificationPort
 from app.application.service.email.EmailDeliveryService import EmailDeliveryService
+from app.common.observability import Metrics
 
 _log = logging.getLogger(__name__)
 
@@ -46,8 +47,12 @@ class RetrySendService:
             return
 
         for notification in due:
+            Metrics.RETRY_ATTEMPTS.inc()
             delivered = await self._delivery.deliver(notification, datetime.now(timezone.utc))
             async with self._tx():
                 await self._save.save(delivered)
 
-        _log.info("Retry batch processed: %d notifications", len(due))
+        _log.info(
+            "retry_batch_processed",
+            extra={"event": "retry_batch_processed", "count": len(due)},
+        )

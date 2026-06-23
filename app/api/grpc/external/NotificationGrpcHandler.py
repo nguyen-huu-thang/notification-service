@@ -1,4 +1,5 @@
-from app.api.grpc.external.PeerIdentity import extract_caller_service_id
+from xime.core.security.peer import current_caller
+
 from app.api.grpc.generated.notification_pb2_grpc import NotificationServiceServicer
 from app.api.grpc.mapper.NotificationGrpcMapper import NotificationGrpcMapper
 from app.application.usecase.email.SendEmailUseCase import SendEmailUseCase
@@ -21,6 +22,10 @@ class NotificationGrpcHandler(NotificationServiceServicer):
 
     async def SendEmail(self, request, context):
         command = self._mapper.to_send_email_command(request)
-        caller_service_id = extract_caller_service_id(context)
+        # caller_service_id = CN of the verified mTLS client cert, set into
+        # request_context by the framework's RequestContextInterceptor (built-in).
+        # caller_service_id = CN client cert mTLS đã verify, do
+        # RequestContextInterceptor (built-in) của framework đặt vào request_context.
+        caller_service_id = current_caller()
         result = await self._send_email.execute(command, caller_service_id)
         return self._mapper.to_send_email_response(result)

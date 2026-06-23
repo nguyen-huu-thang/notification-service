@@ -47,6 +47,12 @@ notification:
 template:
   dir: "app/infrastructure/template/templates"
 
+# Observability — Prometheus metrics trên cổng HTTP riêng (service gRPC-only).
+# Prometheus scrape http://<host>:<port>/metrics. Tắt bằng enabled: false.
+metrics:
+  enabled: true
+  port: 9100
+
 trust:
   grpc:
     host: "localhost"

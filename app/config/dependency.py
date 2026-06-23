@@ -24,6 +24,9 @@ from app.infrastructure.persistence.repository.trust.TrustVerificationKeyReposit
 # Bootstrap (manual register — nằm ngoài package được scan)
 from app.integration.trust.bootstrap.Bootstrap import Bootstrap
 
+# Observability — metrics HTTP server (manual register — nằm ngoài package scan)
+from app.common.observability.MetricsServer import MetricsServer
+
 # ── Framework reads the `dependency` variable from this module at startup ─────
 #
 # DI scan excludes segments named:
@@ -36,6 +39,7 @@ dependency = BindingConfig()
 # ── Manual registration — classes outside auto-scan ───────────────────────────
 
 dependency.register(Bootstrap)
+dependency.register(MetricsServer)
 
 # ── Package scan ──────────────────────────────────────────────────────────────
 
